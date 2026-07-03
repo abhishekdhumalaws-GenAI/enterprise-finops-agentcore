@@ -1,0 +1,95 @@
+{
+ "Resources": {
+  "FinOpsExecutionWorkflowRoleA54AAA77": {
+   "Type": "AWS::IAM::Role",
+   "Properties": {
+    "AssumeRolePolicyDocument": {
+     "Statement": [
+      {
+       "Action": "sts:AssumeRole",
+       "Effect": "Allow",
+       "Principal": {
+        "Service": "states.amazonaws.com"
+       }
+      }
+     ],
+     "Version": "2012-10-17"
+    }
+   },
+   "Metadata": {
+    "aws:cdk:path": "FinOpsExecutionStack/FinOpsExecutionWorkflow/Role/Resource"
+   }
+  },
+  "FinOpsExecutionWorkflow0B69704E": {
+   "Type": "AWS::StepFunctions::StateMachine",
+   "Properties": {
+    "DefinitionString": "{\"StartAt\":\"PreCheck\",\"States\":{\"PreCheck\":{\"Type\":\"Pass\",\"Result\":{\"stage\":\"precheck\",\"status\":\"PASSED\",\"message\":\"Dry-run precheck completed.\"},\"ResultPath\":\"$.precheck\",\"Next\":\"ExecuteChange\"},\"ExecuteChange\":{\"Type\":\"Pass\",\"Result\":{\"stage\":\"execution\",\"status\":\"SIMULATED_SUCCESS\",\"message\":\"Dry-run execution completed. No AWS resource was modified.\"},\"ResultPath\":\"$.execution\",\"Next\":\"VerifyChange\"},\"VerifyChange\":{\"Type\":\"Pass\",\"Result\":{\"stage\":\"verification\",\"status\":\"PASSED\",\"rollback_required\":false},\"ResultPath\":\"$.verification\",\"Next\":\"RollbackDecision\"},\"RollbackDecision\":{\"Type\":\"Choice\",\"Choices\":[{\"Variable\":\"$.verification.rollback_required\",\"BooleanEquals\":true,\"Next\":\"PrepareRollback\"}],\"Default\":\"Complete\"},\"Complete\":{\"Type\":\"Succeed\"},\"PrepareRollback\":{\"Type\":\"Pass\",\"Result\":{\"stage\":\"rollback\",\"status\":\"READY\",\"message\":\"Rollback plan prepared.\"},\"ResultPath\":\"$.rollback\",\"Next\":\"CompleteWithRollback\"},\"CompleteWithRollback\":{\"Type\":\"Succeed\"}},\"TimeoutSeconds\":900}",
+    "RoleArn": {
+     "Fn::GetAtt": [
+      "FinOpsExecutionWorkflowRoleA54AAA77",
+      "Arn"
+     ]
+    },
+    "StateMachineName": "enterprise-finops-execution-workflow"
+   },
+   "DependsOn": [
+    "FinOpsExecutionWorkflowRoleA54AAA77"
+   ],
+   "UpdateReplacePolicy": "Delete",
+   "DeletionPolicy": "Delete",
+   "Metadata": {
+    "aws:cdk:path": "FinOpsExecutionStack/FinOpsExecutionWorkflow/Resource"
+   }
+  },
+  "CDKMetadata": {
+   "Type": "AWS::CDK::Metadata",
+   "Properties": {
+    "Analytics": "v2:deflate64:H4sIAAAAAAAA/02KQQ6CMBBFz8J+GAWJF2BtJHAAU4chjEBL7DTGNL27oBtX7//3f4nlucBjZl4+p37KZ7lj7NTQBJu6Ra+8DsGSirMeY2O8hy4QMfdQj06IYXsrXwyNYhnqwf73BGIWjK2bv9POlPZ0DboGTdC8dXT2cMKiwip7eJH8GazKwtj++AHz866qogAAAA=="
+   },
+   "Metadata": {
+    "aws:cdk:path": "FinOpsExecutionStack/CDKMetadata/Default"
+   }
+  }
+ },
+ "Outputs": {
+  "FinOpsStateMachineArn": {
+   "Value": {
+    "Ref": "FinOpsExecutionWorkflow0B69704E"
+   }
+  }
+ },
+ "Parameters": {
+  "BootstrapVersion": {
+   "Type": "AWS::SSM::Parameter::Value<String>",
+   "Default": "/cdk-bootstrap/hnb659fds/version",
+   "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]"
+  }
+ },
+ "Rules": {
+  "CheckBootstrapVersion": {
+   "Assertions": [
+    {
+     "Assert": {
+      "Fn::Not": [
+       {
+        "Fn::Contains": [
+         [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5"
+         ],
+         {
+          "Ref": "BootstrapVersion"
+         }
+        ]
+       }
+      ]
+     },
+     "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI."
+    }
+   ]
+  }
+ }
+}

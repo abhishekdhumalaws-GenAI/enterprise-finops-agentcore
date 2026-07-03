@@ -1,0 +1,21 @@
+{
+  "version": "54.0.0",
+  "files": {
+    "dd106f213e605dacb2b2af032569b7da329ce7db4d54e400221f2425097bc563": {
+      "displayName": "FinOpsExecutionStack Template",
+      "source": {
+        "path": "FinOpsExecutionStack.template.json",
+        "packaging": "file"
+      },
+      "destinations": {
+        "current_account-us-east-1-78eee089": {
+          "bucketName": "cdk-hnb659fds-assets-${AWS::AccountId}-us-east-1",
+          "objectKey": "dd106f213e605dacb2b2af032569b7da329ce7db4d54e400221f2425097bc563.json",
+          "region": "us-east-1",
+          "assumeRoleArn": "arn:${AWS::Partition}:iam::${AWS::AccountId}:role/cdk-hnb659fds-file-publishing-role-${AWS::AccountId}-us-east-1"
+        }
+      }
+    }
+  },
+  "dockerImages": {}
+}

@@ -6,6 +6,7 @@ services:
     ports:
       - "8001:8001"
     environment:
+      - FINOPS_STATE_MACHINE_ARN=arn:aws:states:us-east-1:733508957366:stateMachine:enterprise-finops-execution-workflow
       - AWS_DEFAULT_REGION=us-east-1
       - WORKFLOW_TABLE_NAME=enterprise-finops-workflows
     volumes:

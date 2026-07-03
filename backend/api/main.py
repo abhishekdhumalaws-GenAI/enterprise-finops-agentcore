@@ -11,6 +11,7 @@ from backend.services.response_formatter import ResponseFormatter
 from backend.services.llm_service import LLMService
 from backend.orchestrators.stepfunctions_simulator import StepFunctionsSimulator
 from backend.services.workflow_store.workflow_store import WorkflowStore
+from backend.services.stepfunctions.stepfunctions_service import StepFunctionsService
 
 app = FastAPI(title=settings.APP_NAME)
 
@@ -22,6 +23,7 @@ coordinator = CoordinatorAgent()
 execution_agent = ExecutionAgent()
 stepfunctions_simulator = StepFunctionsSimulator()
 workflow_store = WorkflowStore()
+stepfunctions_service = StepFunctionsService()
 
 class FinOpsRequest(BaseModel):
     user_query: str
@@ -180,6 +182,10 @@ def execute_change(request: ExecuteRequest):
     )
 
     orchestration = stepfunctions_simulator.run(result)
+    stepfunctions_execution = stepfunctions_service.start_execution({
+        "execution_result": result,
+        "orchestration": orchestration
+    })
 
     workflow_record = workflow_store.create_workflow(
         workflow_type="FINOPS_EXECUTION",
@@ -198,7 +204,8 @@ def execute_change(request: ExecuteRequest):
         status=result.get("status", "UNKNOWN"),
         details={
             "execution_result": result,
-            "orchestration": orchestration
+            "orchestration": orchestration,
+            "stepfunctions_execution": stepfunctions_execution
         }
     )
 
@@ -207,7 +214,8 @@ def execute_change(request: ExecuteRequest):
         "execution_requested": True,
         "approved": request.approved,
         "result": result,
-        "orchestration": orchestration
+        "orchestration": orchestration,
+        "stepfunctions_execution": stepfunctions_execution
     }
 
 @app.get("/workflows")
