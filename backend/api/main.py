@@ -2,11 +2,15 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from backend.agents.coordinator.coordinator_agent import CoordinatorAgent
 
+from typing import Dict, Any
+from backend.agents.execution.execution_agent import ExecutionAgent
 from backend.config.settings import settings
 from backend.services.request_parser import RequestParser
 from backend.services.agent_registry import AgentRegistry
 from backend.services.response_formatter import ResponseFormatter
 from backend.services.llm_service import LLMService
+from backend.orchestrators.stepfunctions_simulator import StepFunctionsSimulator
+from backend.services.workflow_store.workflow_store import WorkflowStore
 
 app = FastAPI(title=settings.APP_NAME)
 
@@ -15,11 +19,16 @@ registry = AgentRegistry()
 formatter = ResponseFormatter()
 llm_service = LLMService()
 coordinator = CoordinatorAgent()
-
+execution_agent = ExecutionAgent()
+stepfunctions_simulator = StepFunctionsSimulator()
+workflow_store = WorkflowStore()
 
 class FinOpsRequest(BaseModel):
     user_query: str
 
+class ExecuteRequest(BaseModel):
+    execution_plan: Dict[str, Any]
+    approved: bool = False
 
 @app.get("/")
 def health_check():
@@ -33,9 +42,34 @@ def health_check():
 def analyze(request: FinOpsRequest):
     parsed_request = parser.parse(request.user_query)
     coordinated_response = coordinator.handle(request.user_query, parsed_request)
+    workflow_payload = {
+        "user_query": request.user_query,
+        "parsed_request": parsed_request,
+        "coordinated": bool(coordinated_response),
+        "final_answer": coordinated_response.get("final_answer") if coordinated_response else None,
+        "result": coordinated_response.get("result") if coordinated_response else None
+    }
+
+    workflow_record = workflow_store.create_workflow(
+        workflow_type="FINOPS_ANALYSIS",
+        payload=workflow_payload
+    )
 
     if coordinated_response:
+        workflow_store.update_workflow_status(
+            workflow_id=workflow_record["workflow_id"],
+            status="PENDING_APPROVAL"
+            if coordinated_response.get("result", {}).get("approval_workflow", {}).get("approval_required")
+            else "COMPLETED",
+            details={
+                "approval_workflow": coordinated_response.get("result", {}).get("approval_workflow"),
+                "change_manager": coordinated_response.get("result", {}).get("change_manager"),
+                "execution_planner": coordinated_response.get("result", {}).get("execution_planner")
+            }
+        )
+
         return {
+            "workflow_id": workflow_record["workflow_id"],
             "user_query": request.user_query,
             "parsed_request": parsed_request,
             "final_answer": coordinated_response["final_answer"],
@@ -47,6 +81,7 @@ def analyze(request: FinOpsRequest):
 
     if not agent:
         return {
+            "workflow_id": workflow_record["workflow_id"],
             "user_query": request.user_query,
             "parsed_request": parsed_request,
             "final_answer": "No suitable agent found for this request.",
@@ -136,3 +171,45 @@ def analyze(request: FinOpsRequest):
         "result": result,
         "message": "Request parsed and handled by Agent Registry."
     }
+
+@app.post("/execute")
+def execute_change(request: ExecuteRequest):
+    result = execution_agent.execute(
+        execution_plan=request.execution_plan,
+        approved=request.approved
+    )
+
+    orchestration = stepfunctions_simulator.run(result)
+
+    workflow_record = workflow_store.create_workflow(
+        workflow_type="FINOPS_EXECUTION",
+        payload={
+            "approved": request.approved,
+            "execution_id": result.get("execution_id"),
+            "change_id": result.get("change_id"),
+            "status": result.get("status"),
+            "service": result.get("service"),
+            "category": result.get("category")
+        }
+    )
+
+    workflow_store.update_workflow_status(
+        workflow_id=workflow_record["workflow_id"],
+        status=result.get("status", "UNKNOWN"),
+        details={
+            "execution_result": result,
+            "orchestration": orchestration
+        }
+    )
+
+    return {
+        "workflow_id": workflow_record["workflow_id"],
+        "execution_requested": True,
+        "approved": request.approved,
+        "result": result,
+        "orchestration": orchestration
+    }
+
+@app.get("/workflows")
+def list_workflows():
+    return workflow_store.list_workflows()

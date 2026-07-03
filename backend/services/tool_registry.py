@@ -7,6 +7,7 @@ from backend.tools.trusted_advisor_tool import TrustedAdvisorTool
 from backend.tools.cost_anomaly_tool import CostAnomalyTool
 from backend.tools.pricing_tool import PricingTool
 from backend.tools.cur_tool import CURTool
+from backend.tools.organizations_tool import OrganizationsTool
 
 
 class ToolRegistry:
@@ -21,6 +22,7 @@ class ToolRegistry:
             "cloudwatch": CloudWatchTool(),
             "ec2_discovery": EC2DiscoveryTool(),
             "cur": CURTool(),
+            "organizations": OrganizationsTool(),
         }
 
     def get_tool(self, tool_name: str):

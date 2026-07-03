@@ -14,24 +14,65 @@ class PlannerAgent:
     def create_plan(self, user_query: str, parsed_request: dict):
         query = user_query.lower()
 
-        # Safe fallback planning rules
-        if any(word in query for word in ["why", "increase", "spike", "anomaly", "unusual"]):
+        investigation_keywords = [
+            "why",
+            "increase",
+            "spike",
+            "anomaly",
+            "unusual",
+            "root cause",
+            "unexpected",
+            "sudden"
+        ]
+
+        optimization_keywords = [
+            "reduce",
+            "optimize",
+            "optimization",
+            "recommend optimization",
+            "recommend optimizations",
+            "recommend",
+            "save",
+            "saving",
+            "savings",
+            "lower cost",
+            "cost reduction",
+            "aws bill",
+            "analyze my aws bill",
+            "recommend optimizations"
+        ]
+
+        if any(word in query for word in investigation_keywords):
             return {
                 "workflow": "cost_investigation",
-                "agents": ["cost_analysis", "cur", "cost_anomaly_detection", "pricing", "budgets", "ec2_discovery", "cloudwatch"],
-                "reason": "User is asking for cost increase or anomaly investigation."
+                "agents": [
+                    "organizations",
+                    "cost_analysis",
+                    "cur",
+                    "cost_anomaly_detection",
+                    "pricing",
+                    "budgets",
+                    "ec2_discovery",
+                    "cloudwatch"
+                ],
+                "reason": "User is asking for cost increase, anomaly, or root cause investigation."
             }
 
-        if any(word in query for word in ["reduce", "optimize", "save", "saving", "lower cost"]):
-            agents = ["cost_analysis", "cur", "cost_anomaly_detection", "pricing", "budgets", "ec2_discovery", "cloudwatch"]
-
-            if parsed_request.get("service") == "EC2" or "ec2" in query:
-                agents.append("compute_optimization")
-
+        if any(word in query for word in optimization_keywords):
             return {
                 "workflow": "optimization",
-                "agents": agents,
-                "reason": "User is asking for cost optimization."
+                "agents": [
+                    "organizations",
+                    "cost_analysis",
+                    "cur",
+                    "cost_anomaly_detection",
+                    "pricing",
+                    "budgets",
+                    "ec2_discovery",
+                    "cloudwatch",
+                    "compute_optimization"
+                ],
+                "reason": "User is asking for AWS cost optimization and savings recommendations."
             }
 
         return {

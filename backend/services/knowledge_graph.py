@@ -1,15 +1,21 @@
 from backend.services.savings_estimation_engine import SavingsEstimationEngine
 from backend.services.optimization_recommendation_engine import OptimizationRecommendationEngine
+from backend.services.root_cause_analysis_engine import RootCauseAnalysisEngine
 
 class FinOpsKnowledgeGraph:
     def build(self, result: dict):
         self.savings_estimation_engine = SavingsEstimationEngine()
         self.optimization_recommendation_engine = OptimizationRecommendationEngine()
+        self.root_cause_analysis_engine = RootCauseAnalysisEngine()
+
         graph = {
             "entities": [],
             "relationships": [],
             "facts": []
         }
+
+        self._add_root_cause_analysis(result, graph)
+        self._add_organizations_entities(result, graph)
         self._add_optimization_recommendations(result, graph)
         self._add_cost_entities(result, graph)
         self._add_anomaly_entities(result, graph)
@@ -414,4 +420,65 @@ class FinOpsKnowledgeGraph:
                 "optimization_recommendation",
                 rec.get("category"),
                 rec
+            )
+
+    def _add_organizations_entities(self, result, graph):
+        org_source = None
+
+        if "organizations" in result:
+            org_source = result.get("organizations")
+        elif "execution_results" in result:
+            org_source = result["execution_results"].get("organizations")
+
+        if not org_source:
+            return
+
+        organizations = org_source.get("organizations", {})
+
+        if not organizations.get("success"):
+            self._add_fact(graph, "AWS Organizations data unavailable.")
+            return
+
+        data = organizations.get("data", {})
+        accounts = data.get("accounts", [])
+
+        self._add_fact(
+            graph,
+            f"AWS Organizations accounts found: {data.get('accounts_found', 0)}"
+        )
+
+        for account in accounts[:10]:
+            account_id = account.get("account_id")
+            name = account.get("name")
+            status = account.get("status")
+            joined_method = account.get("joined_method")
+
+            self._add_entity(
+                graph,
+                "aws_account",
+                account_id,
+                {
+                    "name": name,
+                    "status": status,
+                    "joined_method": joined_method
+                }
+            )
+
+            self._add_fact(
+                graph,
+                f"AWS account {account_id} named {name} has status {status} and joined method {joined_method}."
+            )
+
+    def _add_root_cause_analysis(self, result, graph):
+        root_cause = self.root_cause_analysis_engine.analyze(result)
+
+        for fact in root_cause.get("facts", []):
+            self._add_fact(graph, fact)
+
+        for analysis in root_cause.get("analyses", []):
+            self._add_entity(
+                graph,
+                "root_cause_analysis",
+                analysis.get("category"),
+                analysis
             )

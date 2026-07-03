@@ -5,6 +5,13 @@ from backend.agents.reviewer.reviewer_agent import ReviewerAgent
 from backend.services.agent_registry import AgentRegistry
 from backend.services.llm_service import LLMService
 from backend.services.execution_context import ExecutionContext
+from backend.agents.optimization_planner.optimization_planner_agent import OptimizationPlannerAgent
+from backend.engines.decision_engine.ai_decision_engine import AIDecisionEngine
+from backend.engines.reasoning_engine.ai_reasoning_engine import AIReasoningEngine
+from backend.agents.approval_workflow.approval_workflow_agent import ApprovalWorkflowAgent
+from backend.engines.change_manager.enterprise_change_manager import EnterpriseChangeManager
+from backend.services.demo.demo_finops_data import get_demo_execution_results
+from backend.agents.execution_planner.execution_planner_agent import ExecutionPlannerAgent
 
 class CoordinatorAgent:
     def __init__(self):
@@ -13,6 +20,12 @@ class CoordinatorAgent:
         self.registry = AgentRegistry()
         self.llm_service = LLMService()
         self.reviewer = ReviewerAgent()
+        self.optimization_planner_agent = OptimizationPlannerAgent()
+        self.decision_engine = AIDecisionEngine()
+        self.reasoning_engine = AIReasoningEngine()
+        self.approval_workflow_agent = ApprovalWorkflowAgent()
+        self.change_manager = EnterpriseChangeManager()
+        self.execution_planner_agent = ExecutionPlannerAgent()
 
     def handle(self, user_query: str, parsed_request: dict):
         start_time = time.time()
@@ -24,6 +37,65 @@ class CoordinatorAgent:
             return None
 
         execution_results = {}
+        demo_mode = any(
+            word in user_query.lower()
+            for word in ["demo mode", "mock data", "sample data"]
+        )
+
+        if demo_mode:
+            execution_results = get_demo_execution_results()
+
+            optimization_plan = self.optimization_planner_agent.handle_request({
+                "cost_analysis": execution_results.get("cost_analysis", {}),
+                "anomalies": execution_results.get("cost_anomaly_detection", {}).get("anomalies", []),
+                "ec2_discovery": execution_results.get("ec2_discovery", {}),
+                "cloudwatch_metrics": execution_results.get("cloudwatch", {}),
+                "compute_optimization": execution_results.get("compute_optimization", {}),
+                "pricing": execution_results.get("pricing", {}),
+                "budgets": execution_results.get("budgets", {}),
+                "cur": execution_results.get("cur", {}),
+                "organizations": execution_results.get("organizations", {}),
+                "context": context.to_dict()
+            })
+
+            decision_result = self.decision_engine.evaluate(optimization_plan)
+            reasoning_result = self.reasoning_engine.generate(decision_result)
+            approval_result = self.approval_workflow_agent.create_approval_requests(
+                reasoning_result
+            )
+            change_result = self.change_manager.create_change_requests(approval_result)
+            execution_plan_result = self.execution_planner_agent.create_execution_plans(
+                change_result
+            )
+
+            combined_result = {
+                "agent": self.name,
+                "planner": self.planner.name,
+                "plan": {
+                    "workflow": "demo_optimization",
+                    "agents": plan.get("agents", []),
+                    "reason": "Demo mode uses realistic mock FinOps data."
+                },
+                "context": context.to_dict(),
+                "execution_results": execution_results,
+                "optimization_plan": optimization_plan,
+                "decision_engine": decision_result,
+                "reasoning_engine": reasoning_result,
+                "approval_workflow": approval_result,
+                "change_manager": change_result,
+                "execution_planner": execution_plan_result,
+                "demo_mode": True
+            }
+
+            return {
+                "coordinated": True,
+                "final_answer": (
+                    "# Enterprise FinOps Demo Mode\n\n"
+                    "Demo mode executed successfully using realistic mock AWS FinOps data.\n\n"
+                    "The platform generated optimization plans, decision scores, reasoning, approval requests, and enterprise change requests without consuming Bedrock tokens or live AWS cost data."
+                ),
+                "result": combined_result
+            }
 
         for agent_name in plan.get("agents", []):
             agent = self.registry.get_agent(agent_name)
@@ -44,18 +116,44 @@ class CoordinatorAgent:
 
             execution_results[agent_name] = agent.handle(agent_request)
 
-        self._update_context_from_result(
-            agent_name=agent_name,
-            result=execution_results[agent_name],
-            context=context
+            self._update_context_from_result(
+                agent_name=agent_name,
+                result=execution_results[agent_name],
+                context=context
+            )
+
+        optimization_plan = self.optimization_planner_agent.handle_request({
+            "cost_analysis": execution_results.get("cost_analysis", {}),
+            "anomalies": execution_results.get("cost_anomaly_detection", {}).get("anomalies", []),
+            "ec2_discovery": execution_results.get("ec2_discovery", {}),
+            "cloudwatch_metrics": execution_results.get("cloudwatch", {}),
+            "compute_optimization": execution_results.get("compute_optimization", {}),
+            "pricing": execution_results.get("pricing", {}),
+            "budgets": execution_results.get("budgets", {}),
+            "cur": execution_results.get("cur", {}),
+            "organizations": execution_results.get("organizations", {}),
+            "context": context.to_dict()
+        })
+
+        decision_result = self.decision_engine.evaluate(optimization_plan)
+        reasoning_result = self.reasoning_engine.generate(decision_result)
+        approval_result = self.approval_workflow_agent.create_approval_requests(
+            reasoning_result
         )
+        change_result = self.change_manager.create_change_requests(approval_result)
 
         combined_result = {
             "agent": self.name,
             "planner": self.planner.name,
             "plan": plan,
-            "execution_results": context.to_dict(),
-            "execution_results": execution_results
+            "context": context.to_dict(),
+            "execution_results": execution_results,
+            "optimization_plan": optimization_plan,
+            "decision_engine": decision_result,
+            "reasoning_engine": reasoning_result,
+            "approval_workflow": approval_result,
+            "change_manager": change_result,
+            "execution_planner": execution_plan_result
         }
 
         structured_response = self.llm_service.generate_structured_finops_answer(
@@ -63,7 +161,8 @@ class CoordinatorAgent:
             parsed_request={
                 "intent": "planned_multi_agent_workflow",
                 "workflow": plan.get("workflow"),
-                "agents": plan.get("agents")
+                "agents": plan.get("agents"),
+                "phase": "optimization_planning"
             },
             result=combined_result
         )
@@ -91,16 +190,22 @@ class CoordinatorAgent:
                     )
                 )
         else:
-            final_answer = structured_response.get(
-                "fallback_answer",
-                "Unable to generate FinOps response."
-            )
+            final_answer = structured_response.get("fallback_answer")
+
+            if not final_answer:
+                final_answer = (
+                    "# Enterprise FinOps Analysis Completed\n\n"
+                    "The multi-agent FinOps workflow completed successfully, but Amazon Bedrock could not generate the final natural-language summary.\n\n"
+                    "Please review the structured result below, including optimization_plan, decision_engine, reasoning_engine, approval_workflow, and change_manager.\n\n"
+                    f"Error: {structured_response.get('error', 'Unknown LLM error')}"
+                )
 
         execution_time_ms = round((time.time() - start_time) * 1000, 2)
 
         metadata = {
             "workflow": plan.get("workflow"),
             "agents_invoked": plan.get("agents", []),
+            "phase": "optimization_planning",
             "execution_time_ms": execution_time_ms,
             "aws_tool_calls": self._estimate_aws_tool_calls(plan.get("agents", [])),
             "llm_calls": 1,
@@ -192,6 +297,19 @@ class CoordinatorAgent:
                 "days": days
             }
 
+        if agent_name == "organizations":
+            return {
+                "intent": "organizations",
+                "service": "AWS Organizations"
+            }
+
+        if agent_name == "cur":
+            return {
+                "intent": "cur",
+                "days": days,
+                "metric": metric
+            }
+
         return parsed_request
 
     def _extract_instance_type_from_results(self, parsed_request: dict):
@@ -202,7 +320,12 @@ class CoordinatorAgent:
 
         return None
 
-    def _update_context_from_result(self, agent_name: str, result: dict, context: ExecutionContext):
+    def _update_context_from_result(
+        self,
+        agent_name: str,
+        result: dict,
+        context: ExecutionContext
+    ):
         if agent_name == "cost_anomaly_detection":
             anomalies = result.get("anomalies", [])
 
@@ -246,7 +369,10 @@ class CoordinatorAgent:
                 "governance_optimization",
                 "pricing",
                 "budgets",
-                "ec2_discovery"
+                "ec2_discovery",
+                "organizations",
+                "cloudwatch",
+                "cur"
             ]:
                 count += 1
 

@@ -1,0 +1,62 @@
+{
+  "Comment": "Enterprise FinOps Execution Workflow - Dry Run",
+  "StartAt": "PreCheck",
+  "States": {
+    "PreCheck": {
+      "Type": "Pass",
+      "Result": {
+        "stage": "precheck",
+        "status": "PASSED"
+      },
+      "ResultPath": "$.precheck",
+      "Next": "ExecuteChange"
+    },
+    "ExecuteChange": {
+      "Type": "Pass",
+      "Result": {
+        "stage": "execution",
+        "status": "SIMULATED_SUCCESS",
+        "message": "Dry-run execution completed. No AWS resource was modified."
+      },
+      "ResultPath": "$.execution",
+      "Next": "VerifyChange"
+    },
+    "VerifyChange": {
+      "Type": "Pass",
+      "Result": {
+        "stage": "verification",
+        "status": "PASSED",
+        "rollback_required": false
+      },
+      "ResultPath": "$.verification",
+      "Next": "RollbackDecision"
+    },
+    "RollbackDecision": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.verification.rollback_required",
+          "BooleanEquals": true,
+          "Next": "PrepareRollback"
+        }
+      ],
+      "Default": "Complete"
+    },
+    "PrepareRollback": {
+      "Type": "Pass",
+      "Result": {
+        "stage": "rollback",
+        "status": "READY",
+        "message": "Rollback plan prepared."
+      },
+      "ResultPath": "$.rollback",
+      "Next": "CompleteWithRollback"
+    },
+    "CompleteWithRollback": {
+      "Type": "Succeed"
+    },
+    "Complete": {
+      "Type": "Succeed"
+    }
+  }
+}
