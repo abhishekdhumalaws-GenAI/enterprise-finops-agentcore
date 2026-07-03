@@ -1,8 +1,69 @@
 # Enterprise AI FinOps Platform on AWS
 
-An enterprise-grade, multi-agent FinOps platform built with FastAPI, Streamlit, AWS services, and agentic AI orchestration.
+![Python](https://img.shields.io/badge/Python-3.11+-blue)
+![AWS](https://img.shields.io/badge/AWS-FinOps-orange)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
+![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-red)
+![DynamoDB](https://img.shields.io/badge/DynamoDB-Workflow%20Store-blue)
+![Step Functions](https://img.shields.io/badge/Step%20Functions-Orchestration-purple)
+![Status](https://img.shields.io/badge/Status-v1.0%20Preview-success)
 
-This project goes beyond a simple cost analyzer. It performs AWS cost analysis, anomaly investigation, optimization planning, approval workflow generation, change management, dry-run execution planning, verification, rollback preparation, workflow persistence, and executive dashboard reporting.
+An enterprise-grade AI FinOps platform that analyzes AWS spend, detects anomalies, estimates savings, generates optimization plans, creates approval workflows, prepares change requests, executes dry-run actions, verifies outcomes, prepares rollback plans, and stores workflow history.
+
+> Built as a production-style portfolio project demonstrating AWS, Agentic AI, FinOps, enterprise governance, workflow orchestration, and dashboard-driven operations.
+
+---
+
+## Product Preview
+
+| Executive Dashboard | Approval Portal |
+|---|---|
+| Add screenshot: `docs/assets/screenshots/executive-dashboard.png` | Add screenshot: `docs/assets/screenshots/approval-portal.png` |
+
+---
+
+## Why This Project Is Different
+
+Most FinOps demos stop at cost analysis.
+
+This platform goes further:
+
+```text
+Cost Analysis
+   ↓
+Anomaly Detection
+   ↓
+Optimization Planning
+   ↓
+ROI / Risk / Confidence Scoring
+   ↓
+Human Approval Workflow
+   ↓
+Enterprise Change Management
+   ↓
+Dry-Run Execution
+   ↓
+Verification
+   ↓
+Rollback Preparation
+   ↓
+Workflow Persistence
+   ↓
+Executive Dashboard
+
+---
+
+## Business Value
+
+The demo workflow generates:
+
+9 optimization opportunities
+5 approval requests
+5 enterprise change requests
+5 dry-run execution plans
+$13,846.89 estimated monthly savings
+$166,162.68 estimated annual savings
+ROI, risk, confidence, approval, execution, verification, and rollback metadata
 
 ---
 
