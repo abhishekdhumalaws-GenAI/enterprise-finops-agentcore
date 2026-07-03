@@ -1,9 +1,12 @@
+import os
 import json
 import requests
 import streamlit as st
 
-ANALYZE_API_URL = "http://localhost:8001/analyze"
-EXECUTE_API_URL = "http://localhost:8001/execute"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
+
+ANALYZE_API_URL = f"{API_BASE_URL}/analyze"
+EXECUTE_API_URL = f"{API_BASE_URL}/execute"
 
 st.set_page_config(
     page_title="Enterprise FinOps Approval Portal",

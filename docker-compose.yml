@@ -1,0 +1,40 @@
+services:
+  backend:
+    build: .
+    container_name: finops-backend
+    command: uvicorn backend.api.main:app --host 0.0.0.0 --port 8001
+    ports:
+      - "8001:8001"
+    environment:
+      - AWS_DEFAULT_REGION=us-east-1
+      - WORKFLOW_TABLE_NAME=enterprise-finops-workflows
+    volumes:
+      - /home/ubuntu/.aws:/root/.aws:ro
+
+  approval-portal:
+    build: .
+    container_name: finops-approval-portal
+    command: streamlit run frontend/approval_portal.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    environment:
+      - AWS_DEFAULT_REGION=us-east-1
+      - API_BASE_URL=http://backend:8001
+    depends_on:
+      - backend
+    volumes:
+      - /home/ubuntu/.aws:/root/.aws:ro
+
+  executive-dashboard:
+    build: .
+    container_name: finops-executive-dashboard
+    command: streamlit run frontend/executive_dashboard.py --server.port 8502 --server.address 0.0.0.0
+    ports:
+      - "8502:8502"
+    environment:
+      - AWS_DEFAULT_REGION=us-east-1
+      - API_BASE_URL=http://backend:8001
+    depends_on:
+      - backend
+    volumes:
+      - /home/ubuntu/.aws:/root/.aws:ro

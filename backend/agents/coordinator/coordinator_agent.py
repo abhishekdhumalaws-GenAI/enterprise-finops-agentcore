@@ -141,6 +141,9 @@ class CoordinatorAgent:
             reasoning_result
         )
         change_result = self.change_manager.create_change_requests(approval_result)
+        execution_plan_result = self.execution_planner_agent.create_execution_plans(
+            change_result
+        )
 
         combined_result = {
             "agent": self.name,
