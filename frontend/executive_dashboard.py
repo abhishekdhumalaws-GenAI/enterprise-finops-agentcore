@@ -62,10 +62,11 @@ cols[5].metric("Execution Plans", execution.get("execution_plans_count", 0))
 
 st.divider()
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Analytics",
     "Recommendations",
     "Workflow History",
+    "Step Functions",
     "Architecture",
     "System Health"
 ])
@@ -199,6 +200,78 @@ with tab3:
         st.error(f"Workflow history error: {error}")
 
 with tab4:
+    st.subheader("AWS Step Functions Executions")
+    metrics_response = requests.get(
+        f"{API_BASE_URL}/stepfunctions/metrics?max_results=50",
+        timeout=30
+    )
+
+    if metrics_response.status_code == 200:
+        sf_metrics = metrics_response.json()
+
+        m1, m2, m3, m4, m5 = st.columns(5)
+
+        m1.metric("Total Executions", sf_metrics.get("total_executions", 0))
+        m2.metric("Succeeded", sf_metrics.get("succeeded", 0))
+        m3.metric("Failed", sf_metrics.get("failed", 0))
+        m4.metric("Running", sf_metrics.get("running", 0))
+        m5.metric("Success Rate", f"{sf_metrics.get('success_rate', 0)}%")
+
+        st.metric(
+            "Average Duration",
+            f"{sf_metrics.get('average_duration_ms', 0)} ms"
+        )
+
+    try:
+        sf_response = requests.get(
+            f"{API_BASE_URL}/stepfunctions/executions?max_results=10",
+            timeout=30
+        )
+
+        if sf_response.status_code != 200:
+            st.error("Failed to load Step Functions executions.")
+        else:
+            sf_data = sf_response.json()
+            executions = sf_data.get("executions", [])
+
+            if not executions:
+                st.info("No Step Functions executions found.")
+            else:
+                sf_rows = []
+
+                for execution in executions:
+                    sf_rows.append({
+                        "Execution ID": execution.get("name"),
+                        "Status": execution.get("status"),
+                        "Started": execution.get("start_date"),
+                        "Stopped": execution.get("stop_date"),
+                        "Redrive Count": execution.get("redrive_count", 0),
+                        "Execution ARN": execution.get("execution_arn")
+                    })
+
+                sf_df = pd.DataFrame(sf_rows)
+                st.dataframe(sf_df, width="stretch")
+
+                with st.expander("Latest Execution Details", expanded=False):
+                    latest_execution_arn = executions[0].get("execution_arn")
+
+                    detail_response = requests.get(
+                        f"{API_BASE_URL}/stepfunctions/status",
+                        params={"execution_arn": latest_execution_arn},
+                        timeout=30
+                    )
+
+                    if detail_response.status_code == 200:
+                        st.json(detail_response.json())
+                    else:
+                        st.error("Unable to load latest execution details.")
+
+    except Exception as error:
+        st.error(f"Step Functions history error: {error}")
+
+
+
+with tab5:
     st.subheader("Platform Architecture")
 
     st.code(
@@ -247,7 +320,7 @@ Step Functions / CDK / DynamoDB
         language="text"
     )
 
-with tab5:
+with tab6:
     st.subheader("System Health")
 
     health_rows = [

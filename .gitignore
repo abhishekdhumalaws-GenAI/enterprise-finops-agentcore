@@ -4,3 +4,4 @@ __pycache__/
 .env
 .aws/
 .DS_Store
+infrastructure/cdk/cdk.out/

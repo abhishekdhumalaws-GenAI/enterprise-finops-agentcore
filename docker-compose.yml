@@ -9,6 +9,8 @@ services:
       - FINOPS_STATE_MACHINE_ARN=arn:aws:states:us-east-1:733508957366:stateMachine:enterprise-finops-execution-workflow
       - AWS_DEFAULT_REGION=us-east-1
       - WORKFLOW_TABLE_NAME=enterprise-finops-workflows
+      - COGNITO_USER_POOL_ID=us-east-1_eISkSs6Cw
+      - COGNITO_APP_CLIENT_ID=4vf11vm4p0r64b585uhmejh86o
     volumes:
       - /home/ubuntu/.aws:/root/.aws:ro
 

@@ -1,6 +1,8 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel
 from backend.agents.coordinator.coordinator_agent import CoordinatorAgent
+from fastapi import Depends
+from backend.services.auth.cognito_auth import get_current_user, require_groups
 
 from typing import Dict, Any
 from backend.agents.execution.execution_agent import ExecutionAgent
@@ -41,7 +43,8 @@ def health_check():
 
 
 @app.post("/analyze")
-def analyze(request: FinOpsRequest):
+def analyze(request: FinOpsRequest, current_user: dict = Depends(get_current_user)
+):
     parsed_request = parser.parse(request.user_query)
     coordinated_response = coordinator.handle(request.user_query, parsed_request)
     workflow_payload = {
@@ -175,7 +178,14 @@ def analyze(request: FinOpsRequest):
     }
 
 @app.post("/execute")
-def execute_change(request: ExecuteRequest):
+def execute_change(request: ExecuteRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    require_groups(
+        current_user,
+        ["Approver", "Admin"]
+    )
+
     result = execution_agent.execute(
         execution_plan=request.execution_plan,
         approved=request.approved
@@ -219,5 +229,30 @@ def execute_change(request: ExecuteRequest):
     }
 
 @app.get("/workflows")
-def list_workflows():
+def list_workflows(current_user: dict = Depends(get_current_user)
+):
     return workflow_store.list_workflows()
+
+@app.get("/stepfunctions/status")
+def get_stepfunctions_status(execution_arn: str, current_user: dict = Depends(get_current_user)
+):
+    status = stepfunctions_service.describe_execution(execution_arn)
+
+    return {
+        "execution_arn": execution_arn,
+        "status": status
+    }
+
+@app.get("/stepfunctions/executions")
+def list_stepfunctions_executions(max_results: int = 10, current_user: dict = Depends(get_current_user)
+):
+    executions = stepfunctions_service.list_executions(max_results=max_results)
+
+    return executions
+
+@app.get("/stepfunctions/metrics")
+def get_stepfunctions_metrics(max_results: int = 50, current_user: dict = Depends(get_current_user)
+):
+    metrics = stepfunctions_service.get_execution_metrics(max_results=max_results)
+
+    return metrics
