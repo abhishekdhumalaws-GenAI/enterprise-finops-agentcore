@@ -1,5 +1,5 @@
 import os
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 import requests
 from fastapi import Header, HTTPException
@@ -58,15 +58,40 @@ class CognitoAuthService:
                 token,
                 key,
                 algorithms=["RS256"],
-                audience=self.app_client_id,
-                issuer=self.issuer
+                issuer=self.issuer,
+                options={
+                    "verify_aud": False
+                }
             )
+
+            token_use = claims.get("token_use")
+
+            if token_use == "id":
+                if claims.get("aud") != self.app_client_id:
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Invalid ID token audience."
+                    )
+
+            elif token_use == "access":
+                if claims.get("client_id") != self.app_client_id:
+                    raise HTTPException(
+                        status_code=401,
+                        detail="Invalid access token client_id."
+                    )
+
+            else:
+                raise HTTPException(
+                    status_code=401,
+                    detail="Invalid token_use."
+                )
 
             return claims
 
         except HTTPException:
             raise
         except Exception as error:
+            print("TOKEN_VALIDATION_ERROR:", str(error), flush=True)
             raise HTTPException(
                 status_code=401,
                 detail=f"Token validation failed: {str(error)}"
@@ -95,6 +120,8 @@ auth_service = CognitoAuthService()
 def get_current_user(
     authorization: str = Header(default=None)
 ) -> Dict[str, Any]:
+
+    print("AUTH_HEADER_RECEIVED:", authorization, flush=True)
 
     if not authorization:
         raise HTTPException(

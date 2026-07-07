@@ -2,13 +2,17 @@ import os
 import pandas as pd
 import requests
 import streamlit as st
+from frontend.auth import auth_headers, logout_button, require_login
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
 
 st.set_page_config(
     page_title="Enterprise FinOps Executive Dashboard",
-    layout="wide"
+    layout="wide",
 )
+
+require_login()
+logout_button()
 
 st.title("Enterprise FinOps Executive Dashboard")
 st.caption("Executive view of savings, approvals, risks, execution readiness, and workflow history.")
@@ -19,6 +23,7 @@ if st.button("Run Demo Analysis"):
         json={
             "user_query": "Analyze my AWS bill and recommend optimizations in demo mode."
         },
+        headers=auth_headers(),
         timeout=120
     )
 
@@ -160,6 +165,7 @@ with tab3:
     try:
         workflow_response = requests.get(
             f"{API_BASE_URL}/workflows",
+            headers=auth_headers(),
             timeout=30
         )
 

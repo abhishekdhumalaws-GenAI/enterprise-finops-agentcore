@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import streamlit as st
+from frontend.auth import auth_headers, logout_button, require_login
 
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
 
@@ -12,6 +13,9 @@ st.set_page_config(
     page_title="Enterprise FinOps Approval Portal",
     layout="wide"
 )
+
+require_login()
+logout_button()
 
 st.title("Enterprise FinOps Approval Portal")
 st.caption("Review optimization decisions, approvals, change requests, and dry-run execution plans.")
@@ -46,7 +50,7 @@ if st.button("Run FinOps Analysis"):
     with st.spinner("Running multi-agent FinOps workflow..."):
         response = requests.post(
             ANALYZE_API_URL,
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **auth_headers()},
             data=json.dumps({"user_query": query}),
             timeout=120
         )
@@ -180,6 +184,7 @@ with tab1:
                                 "approved": True,
                                 "execution_plan": matching_execution_plan
                             },
+                            headers=auth_headers(),
                             timeout=120
                         )
 

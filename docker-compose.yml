@@ -23,6 +23,8 @@ services:
     environment:
       - AWS_DEFAULT_REGION=us-east-1
       - API_BASE_URL=http://backend:8001
+      - COGNITO_USER_POOL_ID=us-east-1_eISkSs6Cw
+      - COGNITO_APP_CLIENT_ID=4vf11vm4p0r64b585uhmejh86o
     depends_on:
       - backend
     volumes:
@@ -37,6 +39,8 @@ services:
     environment:
       - AWS_DEFAULT_REGION=us-east-1
       - API_BASE_URL=http://backend:8001
+      - COGNITO_USER_POOL_ID=us-east-1_eISkSs6Cw
+      - COGNITO_APP_CLIENT_ID=4vf11vm4p0r64b585uhmejh86o
     depends_on:
       - backend
     volumes:
