@@ -56,14 +56,73 @@ execution_plans = execution.get("execution_plans", [])
 
 st.subheader("Executive KPIs")
 
+cost_summary = (
+    execution_results
+    .get("cost_analysis", {})
+    .get("cost_summary", {})
+)
+
+total_cost = cost_summary.get("total_cost", 0)
+top_services = cost_summary.get("top_services", [])
+anomalies = (
+    execution_results
+    .get("cost_anomaly_detection", {})
+    .get("anomalies", [])
+)
+
+sf_metrics = {}
+
+try:
+    metrics_response = requests.get(
+        f"{API_BASE_URL}/stepfunctions/metrics?max_results=50",
+        headers=auth_headers(),
+        timeout=30
+    )
+
+    if metrics_response.status_code == 200:
+        sf_metrics = metrics_response.json()
+except Exception:
+    sf_metrics = {}
+
+st.subheader("Executive KPIs")
+
 cols = st.columns(6)
 
-cols[0].metric("Opportunities", optimization.get("optimization_summary", {}).get("total_opportunities", 0))
-cols[1].metric("Monthly Savings", f"${decision.get('summary', {}).get('estimated_monthly_savings_usd', 0):,.2f}")
-cols[2].metric("Annual Savings", f"${decision.get('summary', {}).get('estimated_annual_savings_usd', 0):,.2f}")
-cols[3].metric("Pending Approvals", approval.get("approval_count", 0))
-cols[4].metric("Change Requests", change.get("change_requests_count", 0))
-cols[5].metric("Execution Plans", execution.get("execution_plans_count", 0))
+cols[0].metric(
+    "Monthly AWS Cost",
+    f"${total_cost:,.2f}"
+)
+
+cols[1].metric(
+    "Monthly Savings",
+    f"${decision.get('summary', {}).get('estimated_monthly_savings_usd', 0):,.2f}"
+)
+
+cols[2].metric(
+    "Annual Savings",
+    f"${decision.get('summary', {}).get('estimated_annual_savings_usd', 0):,.2f}"
+)
+
+cols[3].metric(
+    "Anomalies",
+    len(anomalies)
+)
+
+cols[4].metric(
+    "Pending Approvals",
+    approval.get("approval_count", 0)
+)
+
+cols[5].metric(
+    "Execution Success",
+    f"{sf_metrics.get('success_rate', 0)}%"
+)
+
+st.caption(
+    f"Workflow ID: {result.get('workflow_id', 'N/A')} | "
+    f"Opportunities: {optimization.get('optimization_summary', {}).get('total_opportunities', 0)} | "
+    f"Execution Plans: {execution.get('execution_plans_count', 0)}"
+)
 
 st.divider()
 
@@ -90,16 +149,39 @@ with tab1:
 
     if top_services:
         service_df = pd.DataFrame(top_services)
-        service_df = service_df.rename(columns={"service": "Service", "amount": "Cost USD"})
+        service_df = service_df.rename(
+            columns={
+                "service": "Service",
+                "amount": "Cost USD"
+            }
+        )
 
         with chart_col1:
-            st.write("**Cost by Service**")
-            st.bar_chart(service_df.set_index("Service"))
+            st.write("### Cost by AWS Service")
+            selected_services = st.multiselect(
+                "Filter services",
+                service_df["Service"].tolist(),
+                default=service_df["Service"].tolist()
+            )
+
+            filtered_service_df = service_df[
+                service_df["Service"].isin(selected_services)
+            ]
+
+            st.bar_chart(
+                filtered_service_df.set_index("Service")["Cost USD"]
+            )
+    else:
+        with chart_col1:
+            st.info("No service cost data available.")
 
     savings_rows = [
         {
             "Recommendation": item.get("action"),
-            "Monthly Savings USD": item.get("estimated_monthly_savings_usd", 0)
+            "Service": item.get("service"),
+            "Monthly Savings USD": item.get("estimated_monthly_savings_usd", 0),
+            "Risk": item.get("risk", "unknown"),
+            "Approval Required": item.get("requires_approval", False)
         }
         for item in plans
     ]
@@ -108,56 +190,269 @@ with tab1:
         savings_df = pd.DataFrame(savings_rows)
 
         with chart_col2:
-            st.write("**Savings by Recommendation**")
-            st.bar_chart(savings_df.set_index("Recommendation"))
+            st.write("### Savings by Recommendation")
 
-    risk_col, approval_col = st.columns(2)
+            min_chart_savings = st.slider(
+                "Minimum savings shown",
+                min_value=0,
+                max_value=int(max(savings_df["Monthly Savings USD"].max(), 1)),
+                value=0,
+                step=100
+            )
+
+            filtered_savings_df = savings_df[
+                savings_df["Monthly Savings USD"] >= min_chart_savings
+            ]
+
+            st.bar_chart(
+                filtered_savings_df.set_index("Recommendation")["Monthly Savings USD"]
+            )
+    else:
+        with chart_col2:
+            st.info("No savings recommendation data available.")
+
+    st.divider()
+
+    risk_col, approval_col, execution_col = st.columns(3)
 
     if decisions:
         risk_df = pd.DataFrame([
-            {"Risk": item.get("risk", "unknown"), "Count": 1}
-            for item in decisions
-        ])
-        risk_summary = risk_df.groupby("Risk").sum().reset_index()
-
-        with risk_col:
-            st.write("**Risk Distribution**")
-            st.bar_chart(risk_summary.set_index("Risk"))
-
-        approval_df = pd.DataFrame([
             {
-                "Approval Status": "Approval Required" if item.get("requires_approval") else "Review Only",
+                "Risk": item.get("risk", "unknown"),
                 "Count": 1
             }
             for item in decisions
         ])
+
+        risk_summary = risk_df.groupby("Risk").sum().reset_index()
+
+        with risk_col:
+            st.write("### Risk Distribution")
+            st.bar_chart(
+                risk_summary.set_index("Risk")["Count"]
+            )
+
+        approval_df = pd.DataFrame([
+            {
+                "Approval Status": (
+                    "Approval Required"
+                    if item.get("requires_approval")
+                    else "Review Only"
+                ),
+                "Count": 1
+            }
+            for item in decisions
+        ])
+
         approval_summary = approval_df.groupby("Approval Status").sum().reset_index()
 
         with approval_col:
-            st.write("**Approval Status**")
-            st.bar_chart(approval_summary.set_index("Approval Status"))
+            st.write("### Approval Status")
+            st.bar_chart(
+                approval_summary.set_index("Approval Status")["Count"]
+            )
+    else:
+        with risk_col:
+            st.info("No decision data available.")
+
+        with approval_col:
+            st.info("No approval status data available.")
+
+    try:
+        sf_metrics_response = requests.get(
+            f"{API_BASE_URL}/stepfunctions/metrics?max_results=50",
+            headers=auth_headers(),
+            timeout=30
+        )
+
+        if sf_metrics_response.status_code == 200:
+            sf_metrics_data = sf_metrics_response.json()
+
+            execution_status_df = pd.DataFrame([
+                {"Status": "Succeeded", "Count": sf_metrics_data.get("succeeded", 0)},
+                {"Status": "Failed", "Count": sf_metrics_data.get("failed", 0)},
+                {"Status": "Running", "Count": sf_metrics_data.get("running", 0)},
+                {"Status": "Timed Out", "Count": sf_metrics_data.get("timed_out", 0)},
+                {"Status": "Aborted", "Count": sf_metrics_data.get("aborted", 0)}
+            ])
+
+            with execution_col:
+                st.write("### Execution Status")
+                st.bar_chart(
+                    execution_status_df.set_index("Status")["Count"]
+                )
+        else:
+            with execution_col:
+                st.info("No Step Functions metrics available.")
+
+    except Exception as error:
+        with execution_col:
+            st.error(f"Execution metrics error: {error}")
+
+    st.divider()
+
+    if savings_rows:
+        st.write("### Optimization Analytics Table")
+
+        table_filter_col1, table_filter_col2 = st.columns(2)
+
+        risk_filter = table_filter_col1.selectbox(
+            "Risk Filter",
+            ["All"] + sorted(savings_df["Risk"].dropna().unique().tolist())
+        )
+
+        approval_filter = table_filter_col2.selectbox(
+            "Approval Filter",
+            ["All", "Required", "Not Required"]
+        )
+
+        analytics_table = savings_df.copy()
+
+        if risk_filter != "All":
+            analytics_table = analytics_table[
+                analytics_table["Risk"] == risk_filter
+            ]
+
+        if approval_filter == "Required":
+            analytics_table = analytics_table[
+                analytics_table["Approval Required"] == True
+            ]
+
+        if approval_filter == "Not Required":
+            analytics_table = analytics_table[
+                analytics_table["Approval Required"] == False
+            ]
+
+        st.dataframe(
+            analytics_table.sort_values(
+                by="Monthly Savings USD",
+                ascending=False
+            ),
+            width="stretch"
+        )
 
 with tab2:
-    st.subheader("Top Optimization Recommendations")
+    st.subheader("Optimization Recommendation Drill-Down")
 
     if not plans:
         st.info("No optimization opportunities found.")
     else:
-        for item in plans[:8]:
-            with st.expander(f"{item.get('service')} — {item.get('action')}", expanded=True):
-                c1, c2, c3, c4 = st.columns(4)
+        for index, item in enumerate(plans[:10], start=1):
+            service = item.get("service", "Unknown Service")
+            action = item.get("action", "Optimization Recommendation")
 
-                c1.metric("Monthly Savings", f"${item.get('estimated_monthly_savings_usd', 0):,.2f}")
-                c2.metric("Priority", item.get("priority_score", 0))
-                c3.metric("Risk", item.get("risk", "unknown"))
-                c4.metric("Approval", "Yes" if item.get("requires_approval") else "No")
+            with st.expander(f"#{index} {service} — {action}", expanded=index == 1):
+                c1, c2, c3, c4, c5 = st.columns(5)
 
-                st.write("**Recommendation:**")
-                st.write(item.get("recommendation"))
+                monthly_savings = item.get("estimated_monthly_savings_usd", 0)
+                annual_savings = monthly_savings * 12
 
-                st.write("**Implementation Steps:**")
-                for step in item.get("implementation_steps", []):
-                    st.write(f"- {step}")
+                c1.metric("Monthly Savings", f"${monthly_savings:,.2f}")
+                c2.metric("Annual Savings", f"${annual_savings:,.2f}")
+                c3.metric("Priority", item.get("priority_score", 0))
+                c4.metric("Risk", item.get("risk", "unknown"))
+                c5.metric("Approval", "Required" if item.get("requires_approval") else "Not Required")
+
+                st.write("### Recommendation")
+                st.write(item.get("recommendation", "No recommendation available."))
+
+                drill_col1, drill_col2 = st.columns(2)
+
+                with drill_col1:
+                    st.write("### Evidence")
+                    evidence = item.get("evidence", {})
+
+                    if evidence:
+                        st.json(evidence)
+                    else:
+                        st.info("No structured evidence available.")
+
+                    st.write("### Implementation Steps")
+                    steps = item.get("implementation_steps", [])
+
+                    if steps:
+                        for step in steps:
+                            st.write(f"- {step}")
+                    else:
+                        st.info("No implementation steps available.")
+
+                with drill_col2:
+                    matching_decision = None
+
+                    for decision_item in decisions:
+                        if (
+                            decision_item.get("service") == service
+                            and decision_item.get("action") == action
+                        ):
+                            matching_decision = decision_item
+                            break
+
+                    if matching_decision:
+                        st.write("### Decision Engine")
+                        st.json({
+                            "decision": matching_decision.get("decision"),
+                            "roi_score": matching_decision.get("roi_score"),
+                            "confidence_score": matching_decision.get("confidence_score"),
+                            "risk_score": matching_decision.get("risk_score"),
+                            "business_impact": matching_decision.get("business_impact")
+                        })
+                    else:
+                        st.info("No matching decision engine record found.")
+
+                    matching_approval = None
+
+                    for approval_item in approvals:
+                        if (
+                            approval_item.get("service") == service
+                            and approval_item.get("action") == action
+                        ):
+                            matching_approval = approval_item
+                            break
+
+                    st.write("### Approval Path")
+
+                    if matching_approval:
+                        st.json({
+                            "approval_id": matching_approval.get("approval_id"),
+                            "approver": matching_approval.get("approver"),
+                            "approval_reason": matching_approval.get("approval_reason"),
+                            "financial_impact": matching_approval.get("financial_impact"),
+                            "risk_assessment": matching_approval.get("risk_assessment")
+                        })
+                    else:
+                        st.success("No human approval required.")
+
+                st.write("### Execution & Rollback")
+
+                matching_execution_plan = None
+
+                for execution_item in execution_plans:
+                    if (
+                        execution_item.get("service") == service
+                        and execution_item.get("action") == action
+                    ):
+                        matching_execution_plan = execution_item
+                        break
+
+                if matching_execution_plan:
+                    ex1, ex2 = st.columns(2)
+
+                    with ex1:
+                        st.write("**Execution Plan**")
+                        for step in matching_execution_plan.get("execution_steps", []):
+                            st.json(step)
+
+                    with ex2:
+                        st.write("**Rollback Plan**")
+                        rollback_steps = matching_execution_plan.get("rollback_steps", [])
+
+                        if rollback_steps:
+                            for step in rollback_steps:
+                                st.write(f"- {step}")
+                        else:
+                            st.info("No rollback steps available.")
+                else:
+                    st.info("No execution plan generated for this recommendation.")
 
 with tab3:
     st.subheader("Workflow History")
@@ -196,7 +491,53 @@ with tab3:
                     })
 
                 workflow_df = pd.DataFrame(workflow_rows)
-                st.dataframe(workflow_df, width="stretch")
+
+                filter_col1, filter_col2, filter_col3 = st.columns(3)
+
+                status_options = ["All"] + sorted(
+                    workflow_df["Status"].dropna().unique().tolist()
+                )
+
+                type_options = ["All"] + sorted(
+                    workflow_df["Type"].dropna().unique().tolist()
+                )
+
+                selected_status = filter_col1.selectbox(
+                    "Workflow Status",
+                    status_options
+                )
+
+                selected_type = filter_col2.selectbox(
+                    "Workflow Type",
+                    type_options
+                )
+
+                minimum_savings = filter_col3.number_input(
+                    "Minimum Monthly Savings ($)",
+                    min_value=0,
+                    value=0,
+                    step=100
+                )
+
+                filtered_df = workflow_df.copy()
+
+                if selected_status != "All":
+                    filtered_df = filtered_df[
+                        filtered_df["Status"] == selected_status
+                    ]
+
+                if selected_type != "All":
+                    filtered_df = filtered_df[
+                        filtered_df["Type"] == selected_type
+                    ]
+
+                filtered_df = filtered_df[
+                    filtered_df["Monthly Savings"] >= minimum_savings
+                ]
+
+                st.write(f"Showing {len(filtered_df)} of {len(workflow_df)} workflows")
+
+                st.dataframe(filtered_df, width="stretch")
 
                 st.write("**Latest Workflow Details**")
                 with st.expander(workflows[0].get("workflow_id", "Latest Workflow"), expanded=False):
@@ -209,6 +550,7 @@ with tab4:
     st.subheader("AWS Step Functions Executions")
     metrics_response = requests.get(
         f"{API_BASE_URL}/stepfunctions/metrics?max_results=50",
+        headers=auth_headers(),
         timeout=30
     )
 
@@ -231,6 +573,7 @@ with tab4:
     try:
         sf_response = requests.get(
             f"{API_BASE_URL}/stepfunctions/executions?max_results=10",
+            headers=auth_headers(),
             timeout=30
         )
 
@@ -264,6 +607,7 @@ with tab4:
                     detail_response = requests.get(
                         f"{API_BASE_URL}/stepfunctions/status",
                         params={"execution_arn": latest_execution_arn},
+                        headers=auth_headers(),
                         timeout=30
                     )
 

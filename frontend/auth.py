@@ -2,6 +2,7 @@ import os
 
 import boto3
 import streamlit as st
+import jwt
 
 COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID")
 COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID")
@@ -46,11 +47,17 @@ def login_form():
                 st.json(response)
                 return
 
+            decoded_id_token = jwt.decode(
+                id_token,
+                options={"verify_signature": False}
+            )
+
             st.session_state["access_token"] = access_token
             st.session_state["id_token"] = id_token
             st.session_state["refresh_token"] = refresh_token
             st.session_state["authenticated"] = True
             st.session_state["username"] = email
+            st.session_state["groups"] = decoded_id_token.get("cognito:groups", [])
 
             st.success("Login successful.")
             st.rerun()
@@ -65,13 +72,21 @@ def require_login():
         login_form()
         st.stop()
 
-
 def logout_button():
     with st.sidebar:
-        st.write(f"Signed in as: `{st.session_state.get('username')}`")
+        st.subheader("User Session")
+        st.write("Signed in as:")
+        st.code(st.session_state.get("username"))
+
+        st.write("Role:")
+        st.success(current_user_role())
+
+        st.divider()
 
         st.write("Access token:", "Yes" if st.session_state.get("access_token") else "No")
         st.write("ID token:", "Yes" if st.session_state.get("id_token") else "No")
+
+        st.divider()
 
         if st.button("Logout"):
             st.session_state.clear()
@@ -86,3 +101,17 @@ def auth_headers():
     return {
         "Authorization": f"Bearer {token}"
     }
+
+def current_user_role():
+    groups = st.session_state.get("groups", [])
+
+    if "Admin" in groups:
+        return "Admin"
+
+    if "Approver" in groups:
+        return "Approver"
+
+    if "Viewer" in groups:
+        return "Viewer"
+
+    return "Unknown"

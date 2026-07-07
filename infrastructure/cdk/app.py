@@ -4,6 +4,7 @@ import aws_cdk as cdk
 
 from finops_execution_stack import FinOpsExecutionStack
 from cognito_stack import CognitoAuthStack
+from monitoring_stack import MonitoringStack
 
 app = cdk.App()
 
@@ -21,6 +22,12 @@ FinOpsExecutionStack(
 CognitoAuthStack(
     app,
     "CognitoAuthStack",
+    env=env
+)
+
+MonitoringStack(
+    app,
+    "MonitoringStack",
     env=env
 )
 

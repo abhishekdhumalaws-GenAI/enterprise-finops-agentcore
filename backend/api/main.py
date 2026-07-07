@@ -14,6 +14,8 @@ from backend.services.llm_service import LLMService
 from backend.orchestrators.stepfunctions_simulator import StepFunctionsSimulator
 from backend.services.workflow_store.workflow_store import WorkflowStore
 from backend.services.stepfunctions.stepfunctions_service import StepFunctionsService
+from backend.services.metrics.cloudwatch_metrics import CloudWatchMetrics
+from backend.agent_runtime.runtime_registry import build_agent_runtime
 
 app = FastAPI(title=settings.APP_NAME)
 
@@ -26,6 +28,8 @@ execution_agent = ExecutionAgent()
 stepfunctions_simulator = StepFunctionsSimulator()
 workflow_store = WorkflowStore()
 stepfunctions_service = StepFunctionsService()
+cloudwatch_metrics = CloudWatchMetrics()
+agent_runtime = build_agent_runtime()
 
 class FinOpsRequest(BaseModel):
     user_query: str
@@ -33,6 +37,10 @@ class FinOpsRequest(BaseModel):
 class ExecuteRequest(BaseModel):
     execution_plan: Dict[str, Any]
     approved: bool = False
+
+class AgentRuntimeRequest(BaseModel):
+    agent_name: str
+    payload: Dict[str, Any]
 
 @app.get("/")
 def health_check():
@@ -72,6 +80,12 @@ def analyze(request: FinOpsRequest, current_user: dict = Depends(get_current_use
                 "execution_planner": coordinated_response.get("result", {}).get("execution_planner")
             }
         )
+
+        try:
+            execution_result = coordinated_response.get("result", {})
+            cloudwatch_metrics.publish_analysis_metrics(execution_result)
+        except Exception as error:
+            logger.warning(f"CloudWatch metrics publish failed: {error}")
 
         return {
             "workflow_id": workflow_record["workflow_id"],
@@ -219,6 +233,12 @@ def execute_change(request: ExecuteRequest,
         }
     )
 
+    try:
+        cloudwatch_metrics.publish_execution_metrics(result)
+    except Exception as error:
+        logger.warning(f"CloudWatch execution metrics failed: {error}")
+
+
     return {
         "workflow_id": workflow_record["workflow_id"],
         "execution_requested": True,
@@ -256,3 +276,28 @@ def get_stepfunctions_metrics(max_results: int = 50, current_user: dict = Depend
     metrics = stepfunctions_service.get_execution_metrics(max_results=max_results)
 
     return metrics
+
+@app.get("/agent-runtime/agents")
+def list_runtime_agents(
+    current_user: dict = Depends(get_current_user)
+):
+    return {
+        "count": len(agent_runtime.list_agents()),
+        "agents": agent_runtime.list_agents()
+    }
+
+
+@app.post("/agent-runtime/invoke")
+def invoke_runtime_agent(
+    request: AgentRuntimeRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    require_groups(
+        current_user,
+        ["Admin"]
+    )
+
+    return agent_runtime.invoke_agent(
+        request.agent_name,
+        request.payload
+    )
