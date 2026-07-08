@@ -126,13 +126,14 @@ st.caption(
 
 st.divider()
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Analytics",
     "Recommendations",
     "Workflow History",
     "Step Functions",
     "Architecture",
-    "System Health"
+    "System Health",
+    "Agent Runtime"
 ])
 
 with tab1:
@@ -687,3 +688,92 @@ with tab6:
 
     health_df = pd.DataFrame(health_rows)
     st.dataframe(health_df, width="stretch")
+
+with tab7:
+
+    st.subheader("Agent Runtime")
+
+    try:
+
+        agent_response = requests.get(
+            f"{API_BASE_URL}/agent-runtime/agents",
+            headers=auth_headers(),
+            timeout=30
+        )
+
+        if agent_response.status_code == 200:
+
+            runtime = agent_response.json()
+
+            st.metric(
+                "Registered Agents",
+                runtime["count"]
+            )
+
+            st.dataframe(
+                pd.DataFrame(
+                    runtime["agents"],
+                    columns=["Agent Name"]
+                ),
+                width="stretch"
+            )
+
+        else:
+            st.error("Unable to load runtime agents.")
+
+    except Exception as error:
+        st.error(error)
+
+    st.divider()
+
+    st.subheader("Recent Runtime Executions")
+
+    try:
+
+        execution_response = requests.get(
+            f"{API_BASE_URL}/agent-runtime/executions?limit=20",
+            headers=auth_headers(),
+            timeout=30
+        )
+
+        if execution_response.status_code == 200:
+
+            executions = execution_response.json()["executions"]
+
+            if executions:
+
+                df = pd.DataFrame(executions)
+
+                display_columns = [
+                    "execution_id",
+                    "agent_name",
+                    "status",
+                    "duration_ms",
+                    "started_at",
+                    "completed_at"
+                ]
+
+                st.dataframe(
+                    df[display_columns],
+                    width="stretch"
+                )
+
+                latest = executions[-1]
+
+                with st.expander(
+                    "Latest Runtime Execution",
+                    expanded=False
+                ):
+                    st.json(latest)
+
+            else:
+
+                st.info("No runtime executions yet.")
+
+        else:
+
+            st.error("Unable to retrieve execution history.")
+
+    except Exception as error:
+
+        st.error(error)

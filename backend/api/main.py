@@ -15,7 +15,7 @@ from backend.orchestrators.stepfunctions_simulator import StepFunctionsSimulator
 from backend.services.workflow_store.workflow_store import WorkflowStore
 from backend.services.stepfunctions.stepfunctions_service import StepFunctionsService
 from backend.services.metrics.cloudwatch_metrics import CloudWatchMetrics
-from backend.agent_runtime.runtime_registry import build_agent_runtime
+from backend.agent_runtime.runtime_singleton import agent_runtime
 
 app = FastAPI(title=settings.APP_NAME)
 
@@ -29,7 +29,6 @@ stepfunctions_simulator = StepFunctionsSimulator()
 workflow_store = WorkflowStore()
 stepfunctions_service = StepFunctionsService()
 cloudwatch_metrics = CloudWatchMetrics()
-agent_runtime = build_agent_runtime()
 
 class FinOpsRequest(BaseModel):
     user_query: str
@@ -301,3 +300,18 @@ def invoke_runtime_agent(
         request.agent_name,
         request.payload
     )
+
+@app.get("/agent-runtime/executions")
+def list_runtime_executions(
+    limit: int = 20,
+    current_user: dict = Depends(get_current_user)
+):
+    require_groups(
+        current_user,
+        ["Admin"]
+    )
+
+    return {
+        "count": len(agent_runtime.list_executions(limit=limit)),
+        "executions": agent_runtime.list_executions(limit=limit)
+    }

@@ -5,38 +5,38 @@ from backend.agents.execution_planner.execution_planner_agent import ExecutionPl
 from backend.agents.execution.execution_agent import ExecutionAgent
 from backend.agents.verification.verification_agent import VerificationAgent
 from backend.agents.rollback.rollback_agent import RollbackAgent
-
+from backend.agent_runtime.agent_registry import AgentName
 
 def build_agent_runtime() -> AgentRuntime:
     runtime = AgentRuntime()
 
     runtime.register_agent(
-        "optimization_planner",
+        AgentName.OPTIMIZATION_PLANNER.value,
         OptimizationPlannerAgent()
     )
 
     runtime.register_agent(
-        "approval_workflow",
+        AgentName.APPROVAL_WORKFLOW.value,
         ApprovalWorkflowAgent()
     )
 
     runtime.register_agent(
-        "execution_planner",
+        AgentName.EXECUTION_PLANNER.value,
         ExecutionPlannerAgent()
     )
 
     runtime.register_agent(
-        "execution",
+        AgentName.EXECUTION.value,
         ExecutionAgent()
     )
 
     runtime.register_agent(
-        "verification",
+        AgentName.VERIFICATION.value,
         VerificationAgent()
     )
 
     runtime.register_agent(
-        "rollback",
+        AgentName.ROLLBACK.value,
         RollbackAgent()
     )
 

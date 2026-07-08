@@ -4,7 +4,6 @@ from backend.agents.planner.planner_agent import PlannerAgent
 from backend.agents.reviewer.reviewer_agent import ReviewerAgent
 from backend.services.agent_registry import AgentRegistry
 from backend.services.llm_service import LLMService
-from backend.services.execution_context import ExecutionContext
 from backend.agents.optimization_planner.optimization_planner_agent import OptimizationPlannerAgent
 from backend.engines.decision_engine.ai_decision_engine import AIDecisionEngine
 from backend.engines.reasoning_engine.ai_reasoning_engine import AIReasoningEngine
@@ -12,6 +11,10 @@ from backend.agents.approval_workflow.approval_workflow_agent import ApprovalWor
 from backend.engines.change_manager.enterprise_change_manager import EnterpriseChangeManager
 from backend.services.demo.demo_finops_data import get_demo_execution_results
 from backend.agents.execution_planner.execution_planner_agent import ExecutionPlannerAgent
+from backend.agent_runtime.agent_registry import AgentName
+from backend.services.execution_context import ExecutionContext
+from backend.agent_runtime.execution_context import ExecutionContext as RuntimeExecutionContext
+from backend.agent_runtime.runtime_singleton import agent_runtime
 
 class CoordinatorAgent:
     def __init__(self):
@@ -26,6 +29,7 @@ class CoordinatorAgent:
         self.approval_workflow_agent = ApprovalWorkflowAgent()
         self.change_manager = EnterpriseChangeManager()
         self.execution_planner_agent = ExecutionPlannerAgent()
+        self.agent_runtime = agent_runtime
 
     def handle(self, user_query: str, parsed_request: dict):
         start_time = time.time()
@@ -45,18 +49,27 @@ class CoordinatorAgent:
         if demo_mode:
             execution_results = get_demo_execution_results()
 
-            optimization_plan = self.optimization_planner_agent.handle_request({
-                "cost_analysis": execution_results.get("cost_analysis", {}),
-                "anomalies": execution_results.get("cost_anomaly_detection", {}).get("anomalies", []),
-                "ec2_discovery": execution_results.get("ec2_discovery", {}),
-                "cloudwatch_metrics": execution_results.get("cloudwatch", {}),
-                "compute_optimization": execution_results.get("compute_optimization", {}),
-                "pricing": execution_results.get("pricing", {}),
-                "budgets": execution_results.get("budgets", {}),
-                "cur": execution_results.get("cur", {}),
-                "organizations": execution_results.get("organizations", {}),
-                "context": context.to_dict()
-            })
+            runtime_context = RuntimeExecutionContext(
+                payload={
+                    "cost_analysis": execution_results.get("cost_analysis", {}),
+                    "anomalies": execution_results.get("cost_anomaly_detection", {}).get("anomalies", []),
+                    "ec2_discovery": execution_results.get("ec2_discovery", {}),
+                    "cloudwatch_metrics": execution_results.get("cloudwatch", {}),
+                    "compute_optimization": execution_results.get("compute_optimization", {}),
+                    "pricing": execution_results.get("pricing", {}),
+                    "budgets": execution_results.get("budgets", {}),
+                    "cur": execution_results.get("cur", {}),
+                    "organizations": execution_results.get("organizations", {}),
+                    "context": context.to_dict()
+                }
+            )
+
+            planner_execution = self.agent_runtime.invoke_agent(
+                AgentName.OPTIMIZATION_PLANNER.value,
+                context=runtime_context
+            )
+
+            optimization_plan = planner_execution.get("output")
 
             decision_result = self.decision_engine.evaluate(optimization_plan)
             reasoning_result = self.reasoning_engine.generate(decision_result)
@@ -76,6 +89,11 @@ class CoordinatorAgent:
                     "agents": plan.get("agents", []),
                     "reason": "Demo mode uses realistic mock FinOps data."
                 },
+
+                "agent_runtime": {
+                    "planner_execution": planner_execution
+                },
+
                 "context": context.to_dict(),
                 "execution_results": execution_results,
                 "optimization_plan": optimization_plan,
@@ -122,18 +140,27 @@ class CoordinatorAgent:
                 context=context
             )
 
-        optimization_plan = self.optimization_planner_agent.handle_request({
-            "cost_analysis": execution_results.get("cost_analysis", {}),
-            "anomalies": execution_results.get("cost_anomaly_detection", {}).get("anomalies", []),
-            "ec2_discovery": execution_results.get("ec2_discovery", {}),
-            "cloudwatch_metrics": execution_results.get("cloudwatch", {}),
-            "compute_optimization": execution_results.get("compute_optimization", {}),
-            "pricing": execution_results.get("pricing", {}),
-            "budgets": execution_results.get("budgets", {}),
-            "cur": execution_results.get("cur", {}),
-            "organizations": execution_results.get("organizations", {}),
-            "context": context.to_dict()
-        })
+            runtime_context = RuntimeExecutionContext(
+                payload={
+                    "cost_analysis": execution_results.get("cost_analysis", {}),
+                    "anomalies": execution_results.get("cost_anomaly_detection", {}).get("anomalies", []),
+                    "ec2_discovery": execution_results.get("ec2_discovery", {}),
+                    "cloudwatch_metrics": execution_results.get("cloudwatch", {}),
+                    "compute_optimization": execution_results.get("compute_optimization", {}),
+                    "pricing": execution_results.get("pricing", {}),
+                    "budgets": execution_results.get("budgets", {}),
+                    "cur": execution_results.get("cur", {}),
+                    "organizations": execution_results.get("organizations", {}),
+                    "context": context.to_dict()
+                }
+            )
+
+            planner_execution = self.agent_runtime.invoke_agent(
+                AgentName.OPTIMIZATION_PLANNER.value,
+                context=runtime_context
+            )
+
+            optimization_plan = planner_execution.get("output")
 
         decision_result = self.decision_engine.evaluate(optimization_plan)
         reasoning_result = self.reasoning_engine.generate(decision_result)
@@ -149,6 +176,9 @@ class CoordinatorAgent:
             "agent": self.name,
             "planner": self.planner.name,
             "plan": plan,
+            "agent_runtime": {
+                "planner_execution": planner_execution
+            },
             "context": context.to_dict(),
             "execution_results": execution_results,
             "optimization_plan": optimization_plan,
