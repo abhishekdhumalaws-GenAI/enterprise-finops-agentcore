@@ -4,6 +4,25 @@ import requests
 import streamlit as st
 from frontend.auth import auth_headers, logout_button, require_login
 
+def safe_dataframe(rows):
+    safe_rows = []
+
+    for row in rows:
+        safe_row = {}
+
+        for key, value in row.items():
+            if value is None:
+                safe_row[key] = ""
+            elif isinstance(value, (str, int, float, bool)):
+                safe_row[key] = str(value)
+            else:
+                safe_row[key] = str(value)
+
+        safe_rows.append(safe_row)
+
+    return pd.DataFrame(safe_rows, dtype=str)
+
+
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8001")
 
 st.set_page_config(
@@ -18,20 +37,45 @@ st.title("Enterprise FinOps Executive Dashboard")
 st.caption("Executive view of savings, approvals, risks, execution readiness, and workflow history.")
 
 if st.button("Run Demo Analysis"):
-    response = requests.post(
-        f"{API_BASE_URL}/analyze",
-        json={
-            "user_query": "Analyze my AWS bill and recommend optimizations in demo mode."
-        },
-        headers=auth_headers(),
-        timeout=120
-    )
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}/analyze",
+            json={
+                "user_query": "Analyze my AWS bill and recommend optimizations in demo mode."
+            },
+            headers=auth_headers(),
+            timeout=120
+        )
 
-    if response.status_code != 200:
-        st.error("Failed to run analysis.")
-        st.stop()
+        if response.status_code == 200:
+            st.session_state["dashboard_result"] = response.json()
+            st.success("Analysis completed successfully.")
+        else:
+            try:
+                error_detail = response.json()
+            except ValueError:
+                error_detail = response.text
 
-    st.session_state["dashboard_result"] = response.json()
+            st.error(
+                f"Failed to run analysis. "
+                f"Status: {response.status_code}. "
+                f"Details: {error_detail}"
+            )
+
+    except requests.exceptions.ConnectionError:
+        st.error(
+            "Backend is currently unavailable. "
+            "Please confirm the backend container is running and try again."
+        )
+
+    except requests.exceptions.Timeout:
+        st.error(
+            "The analysis request timed out. "
+            "Please try again."
+        )
+
+    except requests.exceptions.RequestException as error:
+        st.error(f"Analysis request failed: {error}")
 
 result = st.session_state.get("dashboard_result")
 
@@ -702,34 +746,36 @@ with tab7:
         )
 
         if agent_response.status_code == 200:
-
             runtime = agent_response.json()
 
             st.metric(
                 "Registered Agents",
-                runtime["count"]
+                runtime.get("count", 0)
             )
 
-            st.dataframe(
-                pd.DataFrame(
-                    runtime["agents"],
-                    columns=["Agent Name"]
-                ),
-                width="stretch"
-            )
+            agent_rows = [
+                {
+                    "Agent Name": str(agent_name)
+                }
+                for agent_name in runtime.get("agents", [])
+            ]
+
+            if agent_rows:
+                agent_df = safe_dataframe(agent_rows)
+                st.table(agent_df)
+            else:
+                st.info("No registered agents found.")
 
         else:
             st.error("Unable to load runtime agents.")
 
     except Exception as error:
-        st.error(error)
+        st.error(f"Agent runtime error: {error}")
 
     st.divider()
-
     st.subheader("Recent Runtime Executions")
 
     try:
-
         execution_response = requests.get(
             f"{API_BASE_URL}/agent-runtime/executions?limit=20",
             headers=auth_headers(),
@@ -737,26 +783,27 @@ with tab7:
         )
 
         if execution_response.status_code == 200:
-
-            executions = execution_response.json()["executions"]
+            executions = execution_response.json().get("executions", [])
 
             if executions:
+                execution_rows = []
 
-                df = pd.DataFrame(executions)
+                for item in executions:
+                    execution_rows.append({
+                        "Workflow ID": item.get("workflow_id"),
+                        "Execution ID": item.get("execution_id"),
+                        "Parent Execution ID": item.get("parent_execution_id"),
+                        "Delegated By": item.get("delegated_by"),
+                        "Delegation Reason": item.get("delegation_reason"),
+                        "Agent": item.get("agent_name"),
+                        "Status": item.get("status"),
+                        "Duration (ms)": item.get("duration_ms"),
+                        "Started": item.get("started_at"),
+                        "Completed": item.get("completed_at"),
+                    })
 
-                display_columns = [
-                    "execution_id",
-                    "agent_name",
-                    "status",
-                    "duration_ms",
-                    "started_at",
-                    "completed_at"
-                ]
-
-                st.dataframe(
-                    df[display_columns],
-                    width="stretch"
-                )
+                execution_df = safe_dataframe(execution_rows)
+                st.table(execution_df)
 
                 latest = executions[-1]
 
@@ -764,16 +811,46 @@ with tab7:
                     "Latest Runtime Execution",
                     expanded=False
                 ):
-                    st.json(latest)
+                    st.json({
+                        "workflow_id": latest.get("workflow_id"),
+                        "execution_id": latest.get("execution_id"),
+                        "parent_execution_id": latest.get("parent_execution_id"),
+                        "agent_name": latest.get("agent_name"),
+                        "status": latest.get("status"),
+                        "duration_ms": latest.get("duration_ms"),
+                        "started_at": latest.get("started_at"),
+                        "completed_at": latest.get("completed_at"),
+                        "error": latest.get("error"),
+                    })
+
+                latest_context = latest.get("context") or {}
+                memory = latest_context.get("memory") or {}
+                memory_entries = memory.get("entries") or []
+
+                if memory_entries:
+                    st.write("### Workflow Memory")
+
+                    memory_rows = []
+
+                    for entry in memory_entries:
+                        memory_rows.append({
+                            "Key": entry.get("key"),
+                            "Source": entry.get("source"),
+                            "Category": entry.get("category"),
+                            "Created": entry.get("created_at"),
+                        })
+
+                    memory_df = safe_dataframe(memory_rows)
+                    st.table(memory_df)
 
             else:
-
                 st.info("No runtime executions yet.")
 
         else:
-
-            st.error("Unable to retrieve execution history.")
+            st.error(
+                f"Unable to retrieve execution history. "
+                f"Status: {execution_response.status_code}"
+            )
 
     except Exception as error:
-
-        st.error(error)
+        st.error(f"Runtime execution history error: {error}")

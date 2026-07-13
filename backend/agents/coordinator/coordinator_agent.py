@@ -16,6 +16,7 @@ from backend.services.execution_context import ExecutionContext
 from backend.agent_runtime.execution_context import ExecutionContext as RuntimeExecutionContext
 from backend.agent_runtime.runtime_singleton import agent_runtime
 
+
 class CoordinatorAgent:
     def __init__(self):
         self.name = "FinOps Coordinator Agent"
@@ -30,6 +31,84 @@ class CoordinatorAgent:
         self.change_manager = EnterpriseChangeManager()
         self.execution_planner_agent = ExecutionPlannerAgent()
         self.agent_runtime = agent_runtime
+
+    def _build_runtime_payload(self, execution_results, context, user_query, parsed_request):
+        return {
+            "user_query": user_query,
+            "parsed_request": parsed_request,
+            "cost_analysis": execution_results.get("cost_analysis", {}),
+            "anomalies": execution_results.get("cost_anomaly_detection", {}).get("anomalies", []),
+            "ec2_discovery": execution_results.get("ec2_discovery", {}),
+            "cloudwatch_metrics": execution_results.get("cloudwatch", {}),
+            "compute_optimization": execution_results.get("compute_optimization", {}),
+            "pricing": execution_results.get("pricing", {}),
+            "budgets": execution_results.get("budgets", {}),
+            "cur": execution_results.get("cur", {}),
+            "organizations": execution_results.get("organizations", {}),
+            "context": context.to_dict(),
+        }
+
+    def _run_runtime_planner_and_decision(self, execution_results, context, user_query, parsed_request):
+        runtime_context = RuntimeExecutionContext(
+            payload=self._build_runtime_payload(
+                execution_results=execution_results,
+                context=context,
+                user_query=user_query,
+                parsed_request=parsed_request,
+            )
+        )
+
+        planner_execution = self.agent_runtime.invoke_agent(
+            AgentName.OPTIMIZATION_PLANNER.value,
+            context=runtime_context,
+        )
+
+        optimization_plan = planner_execution.get("output") or {
+            "agent": "optimization_planner_agent",
+            "status": "failed",
+            "optimization_summary": {
+                "total_opportunities": 0,
+                "high_priority": 0,
+                "approval_required_count": 0,
+                "estimated_monthly_savings_total_usd": 0,
+            },
+            "optimization_plan": [],
+        }
+
+        runtime_context.add_result(
+            AgentName.OPTIMIZATION_PLANNER.value,
+            optimization_plan,
+        )
+
+        runtime_context.payload["optimization_plan"] = optimization_plan
+
+        decision_execution = self.agent_runtime.delegate_agent(
+            from_agent=AgentName.OPTIMIZATION_PLANNER.value,
+            to_agent=AgentName.DECISION_ENGINE.value,
+            context=runtime_context,
+            parent_execution_id=planner_execution.get("execution_id"),
+            reason=(
+                "Evaluate optimization recommendations, calculate decision scores, "
+                "and determine approval requirements."
+            ),
+        )
+
+        decision_result = decision_execution.get("output") or {
+            "agent": "Decision Engine Agent",
+            "status": "failed",
+            "summary": {
+                "estimated_monthly_savings_usd": 0,
+                "estimated_annual_savings_usd": 0,
+            },
+            "decisions": [],
+        }
+
+        runtime_context.add_result(
+            AgentName.DECISION_ENGINE.value,
+            decision_result,
+        )
+
+        return optimization_plan, decision_result, planner_execution, decision_execution, runtime_context,
 
     def handle(self, user_query: str, parsed_request: dict):
         start_time = time.time()
@@ -49,36 +128,81 @@ class CoordinatorAgent:
         if demo_mode:
             execution_results = get_demo_execution_results()
 
-            runtime_context = RuntimeExecutionContext(
-                payload={
-                    "cost_analysis": execution_results.get("cost_analysis", {}),
-                    "anomalies": execution_results.get("cost_anomaly_detection", {}).get("anomalies", []),
-                    "ec2_discovery": execution_results.get("ec2_discovery", {}),
-                    "cloudwatch_metrics": execution_results.get("cloudwatch", {}),
-                    "compute_optimization": execution_results.get("compute_optimization", {}),
-                    "pricing": execution_results.get("pricing", {}),
-                    "budgets": execution_results.get("budgets", {}),
-                    "cur": execution_results.get("cur", {}),
-                    "organizations": execution_results.get("organizations", {}),
-                    "context": context.to_dict()
-                }
+            (
+                optimization_plan,
+                decision_result,
+                planner_execution,
+                decision_execution,
+                runtime_context,
+            ) = self._run_runtime_planner_and_decision(
+                execution_results=execution_results,
+                context=context,
+                user_query=user_query,
+                parsed_request=parsed_request,
             )
 
-            planner_execution = self.agent_runtime.invoke_agent(
-                AgentName.OPTIMIZATION_PLANNER.value,
-                context=runtime_context
-            )
-
-            optimization_plan = planner_execution.get("output")
-
-            decision_result = self.decision_engine.evaluate(optimization_plan)
             reasoning_result = self.reasoning_engine.generate(decision_result)
-            approval_result = self.approval_workflow_agent.create_approval_requests(
-                reasoning_result
+
+            runtime_context.remember(
+                key="reasoning_engine",
+                value=reasoning_result,
+                source="reasoning_engine",
+                category="agent_result",
+            )
+
+            approval_execution = self.agent_runtime.delegate_agent(
+                from_agent=AgentName.DECISION_ENGINE.value,
+                to_agent=AgentName.APPROVAL_WORKFLOW.value,
+                context=runtime_context,
+                parent_execution_id=decision_execution.get("execution_id"),
+                reason=(
+                    "Create approval requests for recommendations that require "
+                    "human authorization based on decision and risk analysis."
+                ),
+            )
+
+            approval_result = approval_execution.get("output") or {
+                "agent": "Approval Runtime Agent",
+                "status": "failed",
+                "approval_required": False,
+                "approval_count": 0,
+                "approvals": [],
+            }
+
+            runtime_context.add_result(
+                AgentName.APPROVAL_WORKFLOW.value,
+                approval_result,
             )
             change_result = self.change_manager.create_change_requests(approval_result)
-            execution_plan_result = self.execution_planner_agent.create_execution_plans(
-                change_result
+
+            runtime_context.remember(
+                key="change_manager",
+                value=change_result,
+                source="change_manager",
+                category="agent_result",
+            )
+
+            execution_planner_execution = self.agent_runtime.delegate_agent(
+                from_agent=AgentName.APPROVAL_WORKFLOW.value,
+                to_agent=AgentName.EXECUTION_PLANNER.value,
+                context=runtime_context,
+                parent_execution_id=approval_execution.get("execution_id"),
+                reason=(
+                    "Execute the approved optimization plan generated by the "
+                    "execution planner."
+                ),
+            )
+
+            execution_plan_result = execution_planner_execution.get("output") or {
+                "agent": "Execution Planner Runtime Agent",
+                "status": "failed",
+                "execution_plans_count": 0,
+                "execution_plans": [],
+            }
+
+            runtime_context.add_result(
+                AgentName.EXECUTION_PLANNER.value,
+                execution_plan_result,
             )
 
             combined_result = {
@@ -87,13 +211,14 @@ class CoordinatorAgent:
                 "plan": {
                     "workflow": "demo_optimization",
                     "agents": plan.get("agents", []),
-                    "reason": "Demo mode uses realistic mock FinOps data."
+                    "reason": "Demo mode uses realistic mock FinOps data.",
                 },
-
                 "agent_runtime": {
-                    "planner_execution": planner_execution
+                    "planner_execution": planner_execution,
+                    "decision_execution": decision_execution,
+                    "approval_execution": approval_execution,
+                    "execution_planner_execution": execution_planner_execution,
                 },
-
                 "context": context.to_dict(),
                 "execution_results": execution_results,
                 "optimization_plan": optimization_plan,
@@ -102,7 +227,7 @@ class CoordinatorAgent:
                 "approval_workflow": approval_result,
                 "change_manager": change_result,
                 "execution_planner": execution_plan_result,
-                "demo_mode": True
+                "demo_mode": True,
             }
 
             return {
@@ -112,7 +237,7 @@ class CoordinatorAgent:
                     "Demo mode executed successfully using realistic mock AWS FinOps data.\n\n"
                     "The platform generated optimization plans, decision scores, reasoning, approval requests, and enterprise change requests without consuming Bedrock tokens or live AWS cost data."
                 ),
-                "result": combined_result
+                "result": combined_result,
             }
 
         for agent_name in plan.get("agents", []):
@@ -129,7 +254,7 @@ class CoordinatorAgent:
                 parsed_request=parsed_request,
                 workflow=plan.get("workflow"),
                 user_query=user_query,
-                context=context
+                context=context,
             )
 
             execution_results[agent_name] = agent.handle(agent_request)
@@ -137,39 +262,85 @@ class CoordinatorAgent:
             self._update_context_from_result(
                 agent_name=agent_name,
                 result=execution_results[agent_name],
-                context=context
+                context=context,
             )
 
-            runtime_context = RuntimeExecutionContext(
-                payload={
-                    "cost_analysis": execution_results.get("cost_analysis", {}),
-                    "anomalies": execution_results.get("cost_anomaly_detection", {}).get("anomalies", []),
-                    "ec2_discovery": execution_results.get("ec2_discovery", {}),
-                    "cloudwatch_metrics": execution_results.get("cloudwatch", {}),
-                    "compute_optimization": execution_results.get("compute_optimization", {}),
-                    "pricing": execution_results.get("pricing", {}),
-                    "budgets": execution_results.get("budgets", {}),
-                    "cur": execution_results.get("cur", {}),
-                    "organizations": execution_results.get("organizations", {}),
-                    "context": context.to_dict()
-                }
-            )
-
-            planner_execution = self.agent_runtime.invoke_agent(
-                AgentName.OPTIMIZATION_PLANNER.value,
-                context=runtime_context
-            )
-
-            optimization_plan = planner_execution.get("output")
-
-        decision_result = self.decision_engine.evaluate(optimization_plan)
-        reasoning_result = self.reasoning_engine.generate(decision_result)
-        approval_result = self.approval_workflow_agent.create_approval_requests(
-            reasoning_result
+        (
+            optimization_plan,
+            decision_result,
+            planner_execution,
+            decision_execution,
+            runtime_context,
+        ) = self._run_runtime_planner_and_decision(
+            execution_results=execution_results,
+            context=context,
+            user_query=user_query,
+            parsed_request=parsed_request,
         )
+
+        reasoning_result = self.reasoning_engine.generate(decision_result)
+
+        runtime_context.remember(
+            key="reasoning_engine",
+            value=reasoning_result,
+            source="reasoning_engine",
+            category="agent_result",
+        )
+
+        approval_execution = self.agent_runtime.delegate_agent(
+            from_agent=AgentName.DECISION_ENGINE.value,
+            to_agent=AgentName.APPROVAL_WORKFLOW.value,
+            context=runtime_context,
+            parent_execution_id=decision_execution.get("execution_id"),
+            reason=(
+                "Create approval requests for recommendations that require "
+                "human authorization based on decision and risk analysis."
+            ),
+        )
+
+        approval_result = approval_execution.get("output") or {
+            "agent": "Approval Runtime Agent",
+            "status": "failed",
+            "approval_required": False,
+            "approval_count": 0,
+            "approvals": [],
+        }
+
+        runtime_context.add_result(
+            AgentName.APPROVAL_WORKFLOW.value,
+            approval_result,
+        )
+
         change_result = self.change_manager.create_change_requests(approval_result)
-        execution_plan_result = self.execution_planner_agent.create_execution_plans(
-            change_result
+
+        runtime_context.remember(
+            key="change_manager",
+            value=change_result,
+            source="change_manager",
+            category="agent_result",
+        )
+
+        execution_execution = self.agent_runtime.delegate_agent(
+            from_agent=AgentName.EXECUTION_PLANNER.value,
+            to_agent=AgentName.EXECUTION.value,
+            context=runtime_context,
+            parent_execution_id=execution_planner_execution.get("execution_id"),
+            reason=(
+                "Execute the approved optimization plan generated by the "
+                "execution planner."
+            ),
+        )
+
+        execution_plan_result = execution_planner_execution.get("output") or {
+            "agent": "Execution Planner Runtime Agent",
+            "status": "failed",
+            "execution_plans_count": 0,
+            "execution_plans": [],
+        }
+
+        runtime_context.add_result(
+            AgentName.EXECUTION_PLANNER.value,
+            execution_plan_result,
         )
 
         combined_result = {
@@ -177,7 +348,10 @@ class CoordinatorAgent:
             "planner": self.planner.name,
             "plan": plan,
             "agent_runtime": {
-                "planner_execution": planner_execution
+                "planner_execution": planner_execution,
+                "decision_execution": decision_execution,
+                "approval_execution": approval_execution,
+                "execution_planner_execution": execution_planner_execution,
             },
             "context": context.to_dict(),
             "execution_results": execution_results,
@@ -186,7 +360,7 @@ class CoordinatorAgent:
             "reasoning_engine": reasoning_result,
             "approval_workflow": approval_result,
             "change_manager": change_result,
-            "execution_planner": execution_plan_result
+            "execution_planner": execution_plan_result,
         }
 
         structured_response = self.llm_service.generate_structured_finops_answer(
@@ -195,9 +369,9 @@ class CoordinatorAgent:
                 "intent": "planned_multi_agent_workflow",
                 "workflow": plan.get("workflow"),
                 "agents": plan.get("agents"),
-                "phase": "optimization_planning"
+                "phase": "optimization_planning",
             },
-            result=combined_result
+            result=combined_result,
         )
 
         review = None
@@ -206,7 +380,7 @@ class CoordinatorAgent:
             grounded_facts = structured_response.get("grounded_facts", {})
             review = self.reviewer.review(
                 structured_answer=structured_response["answer"],
-                grounded_facts=grounded_facts
+                grounded_facts=grounded_facts,
             )
 
             if review.get("approved"):
@@ -243,7 +417,7 @@ class CoordinatorAgent:
             "aws_tool_calls": self._estimate_aws_tool_calls(plan.get("agents", [])),
             "llm_calls": 1,
             "confidence": self._estimate_confidence(execution_results),
-            "review": review
+            "review": review,
         }
 
         combined_result["metadata"] = metadata
@@ -251,7 +425,7 @@ class CoordinatorAgent:
         return {
             "coordinated": True,
             "final_answer": final_answer,
-            "result": combined_result
+            "result": combined_result,
         }
 
     def _build_agent_request(
@@ -260,7 +434,7 @@ class CoordinatorAgent:
         parsed_request: dict,
         workflow: str,
         user_query: str,
-        context: ExecutionContext
+        context: ExecutionContext,
     ):
         days = parsed_request.get("days", 30)
         metric = parsed_request.get("metric", "UnblendedCost")
@@ -275,7 +449,7 @@ class CoordinatorAgent:
                 "intent": "cost_analysis",
                 "service": service,
                 "days": days,
-                "metric": metric
+                "metric": metric,
             }
 
         if agent_name == "cost_anomaly_detection":
@@ -283,7 +457,7 @@ class CoordinatorAgent:
                 "intent": "cost_anomaly_detection",
                 "service": "Cost Anomaly Detection",
                 "days": days,
-                "metric": metric
+                "metric": metric,
             }
 
         if agent_name == "compute_optimization":
@@ -291,7 +465,7 @@ class CoordinatorAgent:
                 "intent": "compute_optimization",
                 "service": "EC2",
                 "days": days,
-                "metric": metric
+                "metric": metric,
             }
 
         if agent_name == "pricing":
@@ -301,13 +475,13 @@ class CoordinatorAgent:
                 "intent": "pricing",
                 "service": "EC2",
                 "region": "US East (N. Virginia)",
-                "instance_type": instance_type
+                "instance_type": instance_type,
             }
 
         if agent_name == "budgets":
             return {
                 "intent": "budgets",
-                "service": "AWS Budgets"
+                "service": "AWS Budgets",
             }
 
         if agent_name == "ec2_discovery":
@@ -316,7 +490,7 @@ class CoordinatorAgent:
             return {
                 "intent": "ec2_discovery",
                 "service": "Amazon EC2",
-                "instance_type": instance_type
+                "instance_type": instance_type,
             }
 
         if agent_name == "cloudwatch":
@@ -327,20 +501,20 @@ class CoordinatorAgent:
                 "metric_name": "CPUUtilization",
                 "dimension_name": "InstanceId",
                 "dimension_value": context.get("instance_id"),
-                "days": days
+                "days": days,
             }
 
         if agent_name == "organizations":
             return {
                 "intent": "organizations",
-                "service": "AWS Organizations"
+                "service": "AWS Organizations",
             }
 
         if agent_name == "cur":
             return {
                 "intent": "cur",
                 "days": days,
-                "metric": metric
+                "metric": metric,
             }
 
         return parsed_request
@@ -357,7 +531,7 @@ class CoordinatorAgent:
         self,
         agent_name: str,
         result: dict,
-        context: ExecutionContext
+        context: ExecutionContext,
     ):
         if agent_name == "cost_anomaly_detection":
             anomalies = result.get("anomalies", [])
@@ -405,7 +579,7 @@ class CoordinatorAgent:
                 "ec2_discovery",
                 "organizations",
                 "cloudwatch",
-                "cur"
+                "cur",
             ]:
                 count += 1
 

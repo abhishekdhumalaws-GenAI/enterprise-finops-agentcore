@@ -9,3 +9,4 @@ pandas
 python-dotenv
 python-jose[cryptography]
 PyJWT
+pyarrow==23.0.1

@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from backend.agent_runtime.workflow_memory import WorkflowMemory
 
 
 class ExecutionContext:
@@ -20,6 +21,7 @@ class ExecutionContext:
         self.facts: List[Dict[str, Any]] = []
         self.warnings: List[str] = []
         self.errors: List[Dict[str, Any]] = []
+        self.memory = WorkflowMemory()
 
         self.created_at = datetime.now(timezone.utc).isoformat()
         self.updated_at = self.created_at
@@ -47,6 +49,31 @@ class ExecutionContext:
         })
         self.touch()
 
+    def remember(
+        self,
+        key,
+        value,
+        source,
+        category="general"
+    ):
+        self.memory.put(
+            key=key,
+            value=value,
+            source=source,
+            category=category
+        )
+        self.touch()
+
+    def recall(
+        self,
+        key,
+        default=None
+    ):
+        return self.memory.get(
+            key,
+            default
+        )
+
     def touch(self):
         self.updated_at = datetime.now(timezone.utc).isoformat()
 
@@ -62,6 +89,7 @@ class ExecutionContext:
             "errors": self.errors,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
+            "memory": self.memory.to_dict(),
         }
 
     @classmethod
@@ -79,5 +107,6 @@ class ExecutionContext:
         context.errors = data.get("errors", [])
         context.created_at = data.get("created_at", context.created_at)
         context.updated_at = data.get("updated_at", context.updated_at)
+        context.memory = WorkflowMemory.from_dict(data.get("memory", {}))
 
         return context

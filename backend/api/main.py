@@ -16,6 +16,13 @@ from backend.services.workflow_store.workflow_store import WorkflowStore
 from backend.services.stepfunctions.stepfunctions_service import StepFunctionsService
 from backend.services.metrics.cloudwatch_metrics import CloudWatchMetrics
 from backend.agent_runtime.runtime_singleton import agent_runtime
+from backend.agent_runtime.agent_registry import AgentName
+from backend.agent_runtime.execution_context import ExecutionContext as RuntimeExecutionContext
+from backend.tool_runtime.tool_bootstrap import bootstrap_tools
+from backend.tool_runtime.tool_registry_singleton import tool_registry
+from backend.tool_runtime.tool_orchestrator_singleton import tool_orchestrator
+from backend.formatter_runtime.formatter_bootstrap import bootstrap_formatters
+from backend.formatter_runtime.formatter_registry_singleton import formatter_registry
 
 app = FastAPI(title=settings.APP_NAME)
 
@@ -29,6 +36,7 @@ stepfunctions_simulator = StepFunctionsSimulator()
 workflow_store = WorkflowStore()
 stepfunctions_service = StepFunctionsService()
 cloudwatch_metrics = CloudWatchMetrics()
+bootstrap_tools()
 
 class FinOpsRequest(BaseModel):
     user_query: str
@@ -40,6 +48,15 @@ class ExecuteRequest(BaseModel):
 class AgentRuntimeRequest(BaseModel):
     agent_name: str
     payload: Dict[str, Any]
+
+class ToolInvocationRequest(BaseModel):
+    tool_name: str
+    arguments: Dict[str, Any] = {}
+
+class ToolOrchestrationRequest(BaseModel):
+    intent: str
+    service: str | None = None
+    arguments: Dict[str, Any] = {}
 
 @app.get("/")
 def health_check():
@@ -54,12 +71,32 @@ def analyze(request: FinOpsRequest, current_user: dict = Depends(get_current_use
 ):
     parsed_request = parser.parse(request.user_query)
     coordinated_response = coordinator.handle(request.user_query, parsed_request)
+    result_for_storage = coordinated_response.get("result") if coordinated_response else None
+
+    if result_for_storage and isinstance(result_for_storage, dict):
+        result_for_storage = result_for_storage.copy()
+
+        agent_runtime = result_for_storage.get("agent_runtime", {})
+
+        if agent_runtime:
+            result_for_storage["agent_runtime"] = {
+                key: {
+                    "execution_id": value.get("execution_id"),
+                    "workflow_id": value.get("workflow_id"),
+                    "parent_execution_id": value.get("parent_execution_id"),
+                    "agent_name": value.get("agent_name"),
+                    "status": value.get("status"),
+                    "duration_ms": value.get("duration_ms"),
+                }
+                for key, value in agent_runtime.items()
+                if isinstance(value, dict)
+            }
     workflow_payload = {
         "user_query": request.user_query,
         "parsed_request": parsed_request,
         "coordinated": bool(coordinated_response),
         "final_answer": coordinated_response.get("final_answer") if coordinated_response else None,
-        "result": coordinated_response.get("result") if coordinated_response else None
+        "result": result_for_storage
     }
 
     workflow_record = workflow_store.create_workflow(
@@ -180,7 +217,19 @@ def analyze(request: FinOpsRequest, current_user: dict = Depends(get_current_use
             )
 
     else:
-        final_answer = "Request completed, but no formatter is available for this intent."
+        formatter_result = formatter_registry.format(
+            intent=parsed_request["intent"],
+            result=result,
+        )
+
+        if formatter_result.get("status") == "succeeded":
+            final_answer = formatter_result["formatted_response"]
+
+        else:
+            final_answer = (
+                "Request completed, but no formatter is available "
+                f"for intent '{parsed_request['intent']}'."
+            )
 
     return {
         "user_query": request.user_query,
@@ -199,10 +248,90 @@ def execute_change(request: ExecuteRequest,
         ["Approver", "Admin"]
     )
 
-    result = execution_agent.execute(
-        execution_plan=request.execution_plan,
-        approved=request.approved
+    runtime_context = RuntimeExecutionContext(
+        payload={
+            "execution_plan": request.execution_plan,
+            "approved": request.approved,
+            "user": current_user
+        }
     )
+
+    execution_runtime_record = agent_runtime.invoke_agent(
+        AgentName.EXECUTION.value,
+        context=runtime_context
+    )
+
+    result = execution_runtime_record.get("output") or {
+        "agent": "Execution Runtime Agent",
+        "status": "failed",
+        "error": "Execution runtime failed."
+    }
+
+    runtime_context.payload["execution_result"] = result
+
+    verification_runtime_record = agent_runtime.delegate_agent(
+        from_agent=AgentName.EXECUTION.value,
+        to_agent=AgentName.VERIFICATION.value,
+        context=runtime_context,
+        parent_execution_id=execution_runtime_record.get("execution_id"),
+        reason=(
+            "Verify the approved FinOps execution result and determine "
+            "whether rollback is required."
+        ),
+    )
+
+    verification_result = verification_runtime_record.get("output") or {
+        "agent": "Verification Runtime Agent",
+        "status": "failed",
+        "overall_result": "FAILED",
+        "checks": [],
+        "summary": {
+            "checks_passed": 0,
+            "checks_failed": 1,
+            "rollback_required": True
+        }
+    }
+
+    result["verification"] = verification_result
+
+    runtime_context.payload["verification_result"] = verification_result
+
+    rollback_runtime_record = None
+    rollback_result = None
+
+    rollback_required = (
+        verification_result
+        .get("summary", {})
+        .get("rollback_required", False)
+    )
+
+    if rollback_required:
+        rollback_runtime_record = agent_runtime.delegate_agent(
+            from_agent=AgentName.VERIFICATION.value,
+            to_agent=AgentName.ROLLBACK.value,
+            context=runtime_context,
+            parent_execution_id=verification_runtime_record.get("execution_id"),
+            reason=(
+                "Verification identified an unsuccessful or unsafe change, "
+                "so restore the previous configuration."
+            ),
+        )
+
+        rollback_result = rollback_runtime_record.get("output") or {
+            "agent": "Rollback Runtime Agent",
+            "status": "failed",
+            "rollback_required": True,
+            "error": "Rollback runtime failed."
+        }
+
+        result["rollback"] = rollback_result
+    else:
+        result["rollback"] = {
+            "agent": "Rollback Runtime Agent",
+            "status": "skipped",
+            "rollback_required": False,
+            "message": "Verification passed. Rollback not required."
+        }
 
     orchestration = stepfunctions_simulator.run(result)
     stepfunctions_execution = stepfunctions_service.start_execution({
@@ -244,7 +373,12 @@ def execute_change(request: ExecuteRequest,
         "approved": request.approved,
         "result": result,
         "orchestration": orchestration,
-        "stepfunctions_execution": stepfunctions_execution
+        "stepfunctions_execution": stepfunctions_execution,
+        "agent_runtime": {
+            "execution_runtime_record": execution_runtime_record,
+            "verification_runtime_record": verification_runtime_record,
+            "rollback_runtime_record": rollback_runtime_record
+        }
     }
 
 @app.get("/workflows")
@@ -315,3 +449,68 @@ def list_runtime_executions(
         "count": len(agent_runtime.list_executions(limit=limit)),
         "executions": agent_runtime.list_executions(limit=limit)
     }
+
+@app.get("/agent-runtime/workflows/{workflow_id}/executions")
+def list_runtime_workflow_executions(
+    workflow_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    require_groups(
+        current_user,
+        ["Admin"]
+    )
+
+    executions = agent_runtime.list_workflow_executions(workflow_id)
+
+    return {
+        "workflow_id": workflow_id,
+        "count": len(executions),
+        "executions": executions
+    }
+
+@app.get("/tool-runtime/tools")
+def list_runtime_tools(
+    current_user: dict = Depends(get_current_user)
+):
+    require_groups(
+        current_user,
+        ["Admin"]
+    )
+
+    tools = tool_registry.list_tools()
+
+    return {
+        "count": len(tools),
+        "tools": tools,
+    }
+
+@app.post("/tool-runtime/invoke")
+def invoke_runtime_tool(
+    request: ToolInvocationRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    require_groups(
+        current_user,
+        ["Admin"]
+    )
+
+    return tool_registry.invoke_tool(
+        request.tool_name,
+        **request.arguments
+    )
+
+@app.post("/tool-runtime/orchestrate")
+def orchestrate_runtime_tool(
+    request: ToolOrchestrationRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    require_groups(
+        current_user,
+        ["Admin"],
+    )
+
+    return tool_orchestrator.orchestrate(
+        intent=request.intent,
+        service=request.service,
+        arguments=request.arguments,
+    )

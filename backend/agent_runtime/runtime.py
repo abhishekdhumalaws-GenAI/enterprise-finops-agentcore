@@ -23,7 +23,10 @@ class AgentRuntime:
         agent_name: str,
         payload: Optional[Dict[str, Any]] = None,
         context: Optional[ExecutionContext] = None,
-        correlation_id: Optional[str] = None
+        correlation_id: Optional[str] = None,
+        parent_execution_id: Optional[str] = None,
+        delegated_by: Optional[str] = None,
+        delegation_reason: Optional[str] = None,
     ) -> Dict[str, Any]:
 
         if context is None:
@@ -38,7 +41,11 @@ class AgentRuntime:
 
         execution_record = {
             "execution_id": execution_id,
+            "workflow_id": context.workflow_id,
             "correlation_id": correlation_id,
+            "parent_execution_id": parent_execution_id,
+            "delegated_by": delegated_by,
+            "delegation_reason": delegation_reason,
             "agent_name": agent_name,
             "status": "RUNNING",
             "started_at": started_at,
@@ -73,6 +80,14 @@ class AgentRuntime:
 
             execution_record["status"] = "SUCCEEDED"
             execution_record["output"] = result
+
+            context.memory.put(
+                key=agent_name,
+                value=result,
+                source=agent_name,
+                category="agent_result"
+            )
+
             context.add_result(agent_name, result)
             execution_record["context"] = context.to_dict()
 
@@ -90,3 +105,40 @@ class AgentRuntime:
             self.executions.append(execution_record)
 
         return execution_record
+
+    def delegate_agent(
+        self,
+        from_agent: str,
+        to_agent: str,
+        context: ExecutionContext,
+        parent_execution_id: str,
+        reason: str,
+    ) -> Dict[str, Any]:
+        if not from_agent:
+            raise ValueError("Delegating agent name is required.")
+
+        if not to_agent:
+            raise ValueError("Target agent name is required.")
+
+        if not parent_execution_id:
+            raise ValueError("Parent execution ID is required for delegation.")
+
+        context.remember(
+            key=f"delegation:{from_agent}:{to_agent}",
+            value={
+                "from_agent": from_agent,
+                "to_agent": to_agent,
+                "parent_execution_id": parent_execution_id,
+                "reason": reason,
+            },
+            source=from_agent,
+            category="delegation",
+        )
+
+        return self.invoke_agent(
+            agent_name=to_agent,
+            context=context,
+            parent_execution_id=parent_execution_id,
+            delegated_by=from_agent,
+            delegation_reason=reason,
+        )
